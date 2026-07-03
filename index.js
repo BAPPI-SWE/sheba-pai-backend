@@ -19,7 +19,6 @@ mongoose
   .then(() => console.log("✅ Connected to MongoDB"))
   .catch((err) => console.error("❌ MongoDB connection error:", err.message));
 
-// --- Health check ---
 app.get("/", (req, res) => {
   res.send("Sheba Pai server is alive!");
 });
@@ -112,8 +111,6 @@ app.get("/api/me", auth, async (req, res) => {
 });
 
 // --- HELPER PROFILE ---
-
-// Helpers only: block non-helper roles from these routes
 function helperOnly(req, res, next) {
   if (req.user.role !== "helper") {
     return res.status(403).json({ error: "Helpers only" });
@@ -121,46 +118,71 @@ function helperOnly(req, res, next) {
   next();
 }
 
-// Create or update the logged-in helper's profile (roles, etc.)
 app.post("/api/helper/profile", auth, helperOnly, async (req, res) => {
   try {
     const { roles } = req.body;
-
-    // upsert: update if a profile exists, otherwise create one
     const profile = await HelperProfile.findOneAndUpdate(
       { user: req.user.id },
       { user: req.user.id, roles },
       { new: true, upsert: true }
     );
-
     res.status(201).json(profile);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
 
-// Helper updates their live location + availability (goes online/offline)
 app.patch("/api/helper/location", auth, helperOnly, async (req, res) => {
   try {
     const { longitude, latitude, isAvailable } = req.body;
-
     const profile = await HelperProfile.findOneAndUpdate(
       { user: req.user.id },
       {
         isAvailable,
         location: {
           type: "Point",
-          coordinates: [longitude, latitude], // [lng, lat] — longitude first!
+          coordinates: [longitude, latitude],
         },
       },
       { new: true }
     );
-
     if (!profile) {
       return res.status(404).json({ error: "Create a helper profile first" });
     }
-
     res.json(profile);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// --- DISPATCH: find nearby available helpers ---
+// Patient sends their location + the role they need.
+// Returns available helpers with that role, within 2km, nearest first.
+app.get("/api/helpers/nearby", auth, async (req, res) => {
+  try {
+    // Query params come in as strings — convert coords to numbers
+    const longitude = parseFloat(req.query.longitude);
+    const latitude = parseFloat(req.query.latitude);
+    const role = req.query.role;
+
+    if (isNaN(longitude) || isNaN(latitude) || !role) {
+      return res
+        .status(400)
+        .json({ error: "longitude, latitude and role are required" });
+    }
+
+    const helpers = await HelperProfile.find({
+      isAvailable: true,
+      roles: role, // matches if this role is in the helper's roles array
+      location: {
+        $near: {
+          $geometry: { type: "Point", coordinates: [longitude, latitude] },
+          $maxDistance: 2000, // 2 km, in meters
+        },
+      },
+    }).populate("user", "name phone"); // pull in the helper's name + phone
+
+    res.json(helpers);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
