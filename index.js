@@ -6,6 +6,7 @@ const jwt = require("jsonwebtoken");
 
 const Service = require("./models/Service");
 const User = require("./models/User");
+const HelperProfile = require("./models/HelperProfile");
 const auth = require("./middleware/auth");
 
 const app = express();
@@ -101,13 +102,65 @@ app.post("/api/auth/login", async (req, res) => {
   }
 });
 
-// --- PROTECTED TEST ROUTE ---
-// The `auth` middleware runs BEFORE the handler. No valid token = blocked.
 app.get("/api/me", auth, async (req, res) => {
   try {
-    // req.user was set by the middleware (contains id + role)
     const user = await User.findById(req.user.id).select("-password");
     res.json(user);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// --- HELPER PROFILE ---
+
+// Helpers only: block non-helper roles from these routes
+function helperOnly(req, res, next) {
+  if (req.user.role !== "helper") {
+    return res.status(403).json({ error: "Helpers only" });
+  }
+  next();
+}
+
+// Create or update the logged-in helper's profile (roles, etc.)
+app.post("/api/helper/profile", auth, helperOnly, async (req, res) => {
+  try {
+    const { roles } = req.body;
+
+    // upsert: update if a profile exists, otherwise create one
+    const profile = await HelperProfile.findOneAndUpdate(
+      { user: req.user.id },
+      { user: req.user.id, roles },
+      { new: true, upsert: true }
+    );
+
+    res.status(201).json(profile);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Helper updates their live location + availability (goes online/offline)
+app.patch("/api/helper/location", auth, helperOnly, async (req, res) => {
+  try {
+    const { longitude, latitude, isAvailable } = req.body;
+
+    const profile = await HelperProfile.findOneAndUpdate(
+      { user: req.user.id },
+      {
+        isAvailable,
+        location: {
+          type: "Point",
+          coordinates: [longitude, latitude], // [lng, lat] — longitude first!
+        },
+      },
+      { new: true }
+    );
+
+    if (!profile) {
+      return res.status(404).json({ error: "Create a helper profile first" });
+    }
+
+    res.json(profile);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
