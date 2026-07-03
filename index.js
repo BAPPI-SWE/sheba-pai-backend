@@ -7,6 +7,7 @@ const jwt = require("jsonwebtoken");
 const Service = require("./models/Service");
 const User = require("./models/User");
 const HelperProfile = require("./models/HelperProfile");
+const Request = require("./models/Request");
 const auth = require("./middleware/auth");
 
 const app = express();
@@ -156,11 +157,8 @@ app.patch("/api/helper/location", auth, helperOnly, async (req, res) => {
 });
 
 // --- DISPATCH: find nearby available helpers ---
-// Patient sends their location + the role they need.
-// Returns available helpers with that role, within 2km, nearest first.
 app.get("/api/helpers/nearby", auth, async (req, res) => {
   try {
-    // Query params come in as strings — convert coords to numbers
     const longitude = parseFloat(req.query.longitude);
     const latitude = parseFloat(req.query.latitude);
     const role = req.query.role;
@@ -173,16 +171,65 @@ app.get("/api/helpers/nearby", auth, async (req, res) => {
 
     const helpers = await HelperProfile.find({
       isAvailable: true,
-      roles: role, // matches if this role is in the helper's roles array
+      roles: role,
       location: {
         $near: {
           $geometry: { type: "Point", coordinates: [longitude, latitude] },
-          $maxDistance: 2000, // 2 km, in meters
+          $maxDistance: 2000,
         },
       },
-    }).populate("user", "name phone"); // pull in the helper's name + phone
+    }).populate("user", "name phone");
 
     res.json(helpers);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// --- REQUESTS ---
+
+// Patient creates a request. Born in "searching" state.
+// Then we look for nearby helpers who could take it.
+app.post("/api/requests", auth, async (req, res) => {
+  try {
+    const { role, longitude, latitude } = req.body;
+
+    if (!role || longitude === undefined || latitude === undefined) {
+      return res
+        .status(400)
+        .json({ error: "role, longitude and latitude are required" });
+    }
+
+    // Create the request (status defaults to "searching")
+    const request = new Request({
+      patient: req.user.id,
+      role,
+      location: { type: "Point", coordinates: [longitude, latitude] },
+    });
+    const savedRequest = await request.save();
+
+    // Find candidate helpers nearby (same dispatch query as before)
+    const nearbyHelpers = await HelperProfile.find({
+      isAvailable: true,
+      roles: role,
+      location: {
+        $near: {
+          $geometry: { type: "Point", coordinates: [longitude, latitude] },
+          $maxDistance: 2000,
+        },
+      },
+    }).populate("user", "name phone");
+
+    // If nobody is available, mark the request as a dead end
+    if (nearbyHelpers.length === 0) {
+      savedRequest.status = "no_helper_found";
+      await savedRequest.save();
+    }
+
+    res.status(201).json({
+      request: savedRequest,
+      candidateHelpers: nearbyHelpers.length,
+    });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
