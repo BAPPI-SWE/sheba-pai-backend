@@ -189,7 +189,6 @@ app.get("/api/helpers/nearby", auth, async (req, res) => {
 // --- REQUESTS ---
 
 // Patient creates a request. Born in "searching" state.
-// Then we look for nearby helpers who could take it.
 app.post("/api/requests", auth, async (req, res) => {
   try {
     const { role, longitude, latitude } = req.body;
@@ -200,7 +199,6 @@ app.post("/api/requests", auth, async (req, res) => {
         .json({ error: "role, longitude and latitude are required" });
     }
 
-    // Create the request (status defaults to "searching")
     const request = new Request({
       patient: req.user.id,
       role,
@@ -208,7 +206,6 @@ app.post("/api/requests", auth, async (req, res) => {
     });
     const savedRequest = await request.save();
 
-    // Find candidate helpers nearby (same dispatch query as before)
     const nearbyHelpers = await HelperProfile.find({
       isAvailable: true,
       roles: role,
@@ -220,7 +217,6 @@ app.post("/api/requests", auth, async (req, res) => {
       },
     }).populate("user", "name phone");
 
-    // If nobody is available, mark the request as a dead end
     if (nearbyHelpers.length === 0) {
       savedRequest.status = "no_helper_found";
       await savedRequest.save();
@@ -230,6 +226,98 @@ app.post("/api/requests", auth, async (req, res) => {
       request: savedRequest,
       candidateHelpers: nearbyHelpers.length,
     });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Helper accepts a request — ATOMIC: only succeeds if still "searching".
+app.patch("/api/requests/:id/accept", auth, helperOnly, async (req, res) => {
+  try {
+    const requestId = req.params.id;
+
+    const updated = await Request.findOneAndUpdate(
+      { _id: requestId, status: "searching" },
+      { status: "accepted", helper: req.user.id },
+      { new: true }
+    );
+
+    if (!updated) {
+      return res
+        .status(409)
+        .json({ error: "This request was already taken or does not exist" });
+    }
+
+    res.json(updated);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Legal forward transitions in the state machine.
+// key = current state, value = the only state you may move to next.
+const transitions = {
+  accepted: "on_the_way",
+  on_the_way: "helping",
+  helping: "completed",
+};
+
+// Helper advances the request through its lifecycle (guarded).
+// Only moves if the request is currently in the correct previous state.
+app.patch("/api/requests/:id/status", auth, helperOnly, async (req, res) => {
+  try {
+    const requestId = req.params.id;
+    const { nextStatus } = req.body;
+
+    // Find which "from" state is allowed to move to the requested nextStatus
+    const validFrom = Object.keys(transitions).find(
+      (from) => transitions[from] === nextStatus
+    );
+
+    if (!validFrom) {
+      return res
+        .status(400)
+        .json({ error: `Cannot transition to '${nextStatus}'` });
+    }
+
+    // Guarded atomic update: must currently be in validFrom, and be THIS helper's job
+    const updated = await Request.findOneAndUpdate(
+      { _id: requestId, status: validFrom, helper: req.user.id },
+      { status: nextStatus },
+      { new: true }
+    );
+
+    if (!updated) {
+      return res.status(409).json({
+        error: `Request is not in '${validFrom}' state, or is not yours`,
+      });
+    }
+
+    res.json(updated);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Patient or helper cancels — allowed from any active (non-terminal) state.
+app.patch("/api/requests/:id/cancel", auth, async (req, res) => {
+  try {
+    const requestId = req.params.id;
+    const activeStates = ["searching", "accepted", "on_the_way", "helping"];
+
+    const updated = await Request.findOneAndUpdate(
+      { _id: requestId, status: { $in: activeStates } },
+      { status: "cancelled" },
+      { new: true }
+    );
+
+    if (!updated) {
+      return res
+        .status(409)
+        .json({ error: "Request cannot be cancelled (already finished?)" });
+    }
+
+    res.json(updated);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
