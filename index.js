@@ -156,6 +156,36 @@ app.patch("/api/helper/location", auth, helperOnly, async (req, res) => {
   }
 });
 
+// Pending requests near the helper (for the helper's home screen).
+// Returns "searching" requests matching the helper's roles, within 2km.
+app.get("/api/helper/requests", auth, helperOnly, async (req, res) => {
+  try {
+    // Get the helper's own profile (for their location + roles)
+    const profile = await HelperProfile.findOne({ user: req.user.id });
+    if (!profile) {
+      return res.status(404).json({ error: "Create a helper profile first" });
+    }
+
+    const requests = await Request.find({
+      status: "searching",
+      role: { $in: profile.roles }, // only roles this helper can do
+      location: {
+        $near: {
+          $geometry: {
+            type: "Point",
+            coordinates: profile.location.coordinates, // helper's location
+          },
+          $maxDistance: 2000, // 2km
+        },
+      },
+    });
+
+    res.json(requests);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // --- DISPATCH: find nearby available helpers ---
 app.get("/api/helpers/nearby", auth, async (req, res) => {
   try {
@@ -187,8 +217,6 @@ app.get("/api/helpers/nearby", auth, async (req, res) => {
 });
 
 // --- REQUESTS ---
-
-// Patient creates a request. Born in "searching" state.
 app.post("/api/requests", auth, async (req, res) => {
   try {
     const { role, longitude, latitude } = req.body;
@@ -231,7 +259,6 @@ app.post("/api/requests", auth, async (req, res) => {
   }
 });
 
-// Helper accepts a request — ATOMIC: only succeeds if still "searching".
 app.patch("/api/requests/:id/accept", auth, helperOnly, async (req, res) => {
   try {
     const requestId = req.params.id;
@@ -254,22 +281,17 @@ app.patch("/api/requests/:id/accept", auth, helperOnly, async (req, res) => {
   }
 });
 
-// Legal forward transitions in the state machine.
-// key = current state, value = the only state you may move to next.
 const transitions = {
   accepted: "on_the_way",
   on_the_way: "helping",
   helping: "completed",
 };
 
-// Helper advances the request through its lifecycle (guarded).
-// Only moves if the request is currently in the correct previous state.
 app.patch("/api/requests/:id/status", auth, helperOnly, async (req, res) => {
   try {
     const requestId = req.params.id;
     const { nextStatus } = req.body;
 
-    // Find which "from" state is allowed to move to the requested nextStatus
     const validFrom = Object.keys(transitions).find(
       (from) => transitions[from] === nextStatus
     );
@@ -280,7 +302,6 @@ app.patch("/api/requests/:id/status", auth, helperOnly, async (req, res) => {
         .json({ error: `Cannot transition to '${nextStatus}'` });
     }
 
-    // Guarded atomic update: must currently be in validFrom, and be THIS helper's job
     const updated = await Request.findOneAndUpdate(
       { _id: requestId, status: validFrom, helper: req.user.id },
       { status: nextStatus },
@@ -299,7 +320,6 @@ app.patch("/api/requests/:id/status", auth, helperOnly, async (req, res) => {
   }
 });
 
-// Patient or helper cancels — allowed from any active (non-terminal) state.
 app.patch("/api/requests/:id/cancel", auth, async (req, res) => {
   try {
     const requestId = req.params.id;
@@ -323,6 +343,6 @@ app.patch("/api/requests/:id/cancel", auth, async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });
