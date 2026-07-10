@@ -7,9 +7,19 @@ const requestSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
+    // Primary role (first of the accepted roles) — kept for compatibility
     role: {
       type: String,
       required: true,
+    },
+    // All helper roles that may fulfill this request (from the service mapping)
+    acceptedRoles: {
+      type: [String],
+      default: [],
+    },
+    // The service the patient chose (Bangla display), e.g. "ওষুধ কিনতে চাই"
+    serviceName: {
+      type: String,
     },
     helper: {
       type: mongoose.Schema.Types.ObjectId,
@@ -44,8 +54,7 @@ const requestSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Geospatial index — REQUIRED for $near queries on requests
-// (this is what was missing, causing the "unable to find index" error)
+// Geospatial index — required for $near queries on requests
 requestSchema.index({ location: "2dsphere" });
 
 module.exports = mongoose.model("Request", requestSchema);

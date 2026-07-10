@@ -10,6 +10,7 @@ const Service = require("./models/Service");
 const User = require("./models/User");
 const HelperProfile = require("./models/HelperProfile");
 const Request = require("./models/Request");
+const Role = require("./models/Role");
 const auth = require("./middleware/auth");
 
 const app = express();
@@ -17,14 +18,12 @@ const app = express();
 // Wrap Express in a raw HTTP server so Socket.IO can share it
 const server = http.createServer(app);
 const io = new Server(server, {
-  cors: { origin: "*" }, // allow the mobile app to connect
+  cors: { origin: "*" },
 });
 
 const PORT = 3000;
 
 app.use(express.json());
-
-// Make `io` reachable inside routes via req.app.get("io")
 app.set("io", io);
 
 mongoose
@@ -32,18 +31,15 @@ mongoose
   .then(() => console.log("✅ Connected to MongoDB"))
   .catch((err) => console.error("❌ MongoDB connection error:", err.message));
 
-// --- SOCKET.IO CONNECTION HANDLING ---
+// --- SOCKET.IO ---
 io.on("connection", (socket) => {
   console.log("🔌 A device connected:", socket.id);
-
-  // The app tells us who it is; we put them in a room named by their userId
   socket.on("register", (userId) => {
     if (userId) {
       socket.join(userId);
       console.log(`   ↳ joined room: ${userId}`);
     }
   });
-
   socket.on("disconnect", () => {
     console.log("❌ A device disconnected:", socket.id);
   });
@@ -51,6 +47,54 @@ io.on("connection", (socket) => {
 
 app.get("/", (req, res) => {
   res.send("Sheba Pai server is alive!");
+});
+
+// --- ROLE GUARDS ---
+function helperOnly(req, res, next) {
+  if (req.user.role !== "helper") {
+    return res.status(403).json({ error: "Helpers only" });
+  }
+  next();
+}
+
+function adminOnly(req, res, next) {
+  if (req.user.role !== "admin") {
+    return res.status(403).json({ error: "Admins only" });
+  }
+  next();
+}
+
+// --- ROLES (admin-managed list of helper roles) ---
+
+// Public read: apps need the role list (e.g. helper picks their role)
+app.get("/api/roles", async (req, res) => {
+  try {
+    const roles = await Role.find().sort({ name: 1 });
+    res.json(roles);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post("/api/roles", auth, adminOnly, async (req, res) => {
+  try {
+    const { name, nameBangla } = req.body;
+    const role = new Role({ name, nameBangla });
+    const saved = await role.save();
+    res.status(201).json(saved);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete("/api/roles/:id", auth, adminOnly, async (req, res) => {
+  try {
+    const deleted = await Role.findByIdAndDelete(req.params.id);
+    if (!deleted) return res.status(404).json({ error: "Role not found" });
+    res.json({ message: "Role deleted", id: req.params.id });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // --- SERVICES ---
@@ -63,7 +107,7 @@ app.get("/api/services", async (req, res) => {
   }
 });
 
-app.post("/api/services", async (req, res) => {
+app.post("/api/services", auth, adminOnly, async (req, res) => {
   try {
     const newService = new Service({
       name: req.body.name,
@@ -72,6 +116,34 @@ app.post("/api/services", async (req, res) => {
     });
     const savedService = await newService.save();
     res.status(201).json(savedService);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.put("/api/services/:id", auth, adminOnly, async (req, res) => {
+  try {
+    const updated = await Service.findByIdAndUpdate(
+      req.params.id,
+      {
+        name: req.body.name,
+        nameBangla: req.body.nameBangla,
+        helperRoles: req.body.helperRoles,
+      },
+      { new: true, runValidators: true }
+    );
+    if (!updated) return res.status(404).json({ error: "Service not found" });
+    res.json(updated);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete("/api/services/:id", auth, adminOnly, async (req, res) => {
+  try {
+    const deleted = await Service.findByIdAndDelete(req.params.id);
+    if (!deleted) return res.status(404).json({ error: "Service not found" });
+    res.json({ message: "Service deleted", id: req.params.id });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -117,7 +189,12 @@ app.post("/api/auth/login", async (req, res) => {
     );
     res.json({
       token,
-      user: { id: user._id, name: user.name, phone: user.phone, role: user.role },
+      user: {
+        id: user._id,
+        name: user.name,
+        phone: user.phone,
+        role: user.role,
+      },
     });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -134,13 +211,6 @@ app.get("/api/me", auth, async (req, res) => {
 });
 
 // --- HELPER PROFILE ---
-function helperOnly(req, res, next) {
-  if (req.user.role !== "helper") {
-    return res.status(403).json({ error: "Helpers only" });
-  }
-  next();
-}
-
 app.post("/api/helper/profile", auth, helperOnly, async (req, res) => {
   try {
     const { roles } = req.body;
@@ -186,7 +256,10 @@ app.get("/api/helper/requests", auth, helperOnly, async (req, res) => {
       role: { $in: profile.roles },
       location: {
         $near: {
-          $geometry: { type: "Point", coordinates: profile.location.coordinates },
+          $geometry: {
+            type: "Point",
+            coordinates: profile.location.coordinates,
+          },
           $maxDistance: 2000,
         },
       },
@@ -204,7 +277,9 @@ app.get("/api/helpers/nearby", auth, async (req, res) => {
     const latitude = parseFloat(req.query.latitude);
     const role = req.query.role;
     if (isNaN(longitude) || isNaN(latitude) || !role) {
-      return res.status(400).json({ error: "longitude, latitude and role are required" });
+      return res
+        .status(400)
+        .json({ error: "longitude, latitude and role are required" });
     }
     const helpers = await HelperProfile.find({
       isAvailable: true,
@@ -223,23 +298,55 @@ app.get("/api/helpers/nearby", auth, async (req, res) => {
 });
 
 // --- REQUESTS ---
+
+// Return the caller's current active (non-terminal) request, if any.
+app.get("/api/requests/active", auth, async (req, res) => {
+  try {
+    const activeStates = ["searching", "accepted", "on_the_way", "helping"];
+    const query =
+      req.user.role === "helper"
+        ? { helper: req.user.id, status: { $in: activeStates } }
+        : { patient: req.user.id, status: { $in: activeStates } };
+    const request = await Request.findOne(query)
+      .sort({ createdAt: -1 })
+      .populate("helper", "name phone");
+    res.json({ request: request || null });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Create a request. Accepts EITHER a single role OR an array of roles.
+// (A service may map to multiple helper roles — we match ANY of them.)
 app.post("/api/requests", auth, async (req, res) => {
   try {
-    const { role, longitude, latitude } = req.body;
-    if (!role || longitude === undefined || latitude === undefined) {
-      return res.status(400).json({ error: "role, longitude and latitude are required" });
+    const { role, roles, serviceName, longitude, latitude } = req.body;
+
+    // Normalize to an array of acceptable roles
+    let roleList = [];
+    if (Array.isArray(roles) && roles.length > 0) roleList = roles;
+    else if (role) roleList = [role];
+
+    if (roleList.length === 0 || longitude === undefined || latitude === undefined) {
+      return res
+        .status(400)
+        .json({ error: "roles (or role), longitude and latitude are required" });
     }
 
+    // Store a primary role on the request (first one) plus the full accepted set
     const request = new Request({
       patient: req.user.id,
-      role,
+      role: roleList[0],
+      acceptedRoles: roleList,
+      serviceName: serviceName || roleList[0],
       location: { type: "Point", coordinates: [longitude, latitude] },
     });
     const savedRequest = await request.save();
 
+    // Find helpers whose role is ANY of the accepted roles, within 2km
     const nearbyHelpers = await HelperProfile.find({
       isAvailable: true,
-      roles: role,
+      roles: { $in: roleList },
       location: {
         $near: {
           $geometry: { type: "Point", coordinates: [longitude, latitude] },
@@ -252,7 +359,6 @@ app.post("/api/requests", auth, async (req, res) => {
       savedRequest.status = "no_helper_found";
       await savedRequest.save();
     } else {
-      // PUSH the new request to each nearby helper's room (instant, no polling)
       const io = req.app.get("io");
       nearbyHelpers.forEach((h) => {
         io.to(h.user._id.toString()).emit("newRequest", savedRequest);
@@ -278,13 +384,13 @@ app.patch("/api/requests/:id/accept", auth, helperOnly, async (req, res) => {
     ).populate("helper", "name phone");
 
     if (!updated) {
-      return res.status(409).json({ error: "This request was already taken or does not exist" });
+      return res
+        .status(409)
+        .json({ error: "This request was already taken or does not exist" });
     }
 
-    // PUSH to the patient's room: "your helper accepted!"
     const io = req.app.get("io");
     io.to(updated.patient.toString()).emit("requestAccepted", updated);
-
     res.json(updated);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -301,9 +407,13 @@ app.patch("/api/requests/:id/status", auth, helperOnly, async (req, res) => {
   try {
     const requestId = req.params.id;
     const { nextStatus } = req.body;
-    const validFrom = Object.keys(transitions).find((from) => transitions[from] === nextStatus);
+    const validFrom = Object.keys(transitions).find(
+      (from) => transitions[from] === nextStatus
+    );
     if (!validFrom) {
-      return res.status(400).json({ error: `Cannot transition to '${nextStatus}'` });
+      return res
+        .status(400)
+        .json({ error: `Cannot transition to '${nextStatus}'` });
     }
     const updated = await Request.findOneAndUpdate(
       { _id: requestId, status: validFrom, helper: req.user.id },
@@ -311,13 +421,12 @@ app.patch("/api/requests/:id/status", auth, helperOnly, async (req, res) => {
       { new: true }
     );
     if (!updated) {
-      return res.status(409).json({ error: `Request is not in '${validFrom}' state, or is not yours` });
+      return res.status(409).json({
+        error: `Request is not in '${validFrom}' state, or is not yours`,
+      });
     }
-
-    // PUSH the status change to the patient
     const io = req.app.get("io");
     io.to(updated.patient.toString()).emit("requestUpdated", updated);
-
     res.json(updated);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -334,7 +443,9 @@ app.patch("/api/requests/:id/cancel", auth, async (req, res) => {
       { new: true }
     );
     if (!updated) {
-      return res.status(409).json({ error: "Request cannot be cancelled (already finished?)" });
+      return res
+        .status(409)
+        .json({ error: "Request cannot be cancelled (already finished?)" });
     }
     res.json(updated);
   } catch (err) {
@@ -342,7 +453,6 @@ app.patch("/api/requests/:id/cancel", auth, async (req, res) => {
   }
 });
 
-// NOTE: we now start `server`, not `app` — Socket.IO rides on `server`
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running at http://localhost:${PORT}`);
 });
