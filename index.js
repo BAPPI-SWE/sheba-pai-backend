@@ -1,5 +1,6 @@
 require("dotenv").config();
 const express = require("express");
+const cors = require("cors");
 const http = require("http");
 const { Server } = require("socket.io");
 const mongoose = require("mongoose");
@@ -15,7 +16,6 @@ const auth = require("./middleware/auth");
 
 const app = express();
 
-// Wrap Express in a raw HTTP server so Socket.IO can share it
 const server = http.createServer(app);
 const io = new Server(server, {
   cors: { origin: "*" },
@@ -23,6 +23,8 @@ const io = new Server(server, {
 
 const PORT = 3000;
 
+// Allow browser-based clients (the admin panel) to call this API
+app.use(cors());
 app.use(express.json());
 app.set("io", io);
 
@@ -64,9 +66,7 @@ function adminOnly(req, res, next) {
   next();
 }
 
-// --- ROLES (admin-managed list of helper roles) ---
-
-// Public read: apps need the role list (e.g. helper picks their role)
+// --- ROLES ---
 app.get("/api/roles", async (req, res) => {
   try {
     const roles = await Role.find().sort({ name: 1 });
@@ -298,8 +298,6 @@ app.get("/api/helpers/nearby", auth, async (req, res) => {
 });
 
 // --- REQUESTS ---
-
-// Return the caller's current active (non-terminal) request, if any.
 app.get("/api/requests/active", auth, async (req, res) => {
   try {
     const activeStates = ["searching", "accepted", "on_the_way", "helping"];
@@ -316,13 +314,10 @@ app.get("/api/requests/active", auth, async (req, res) => {
   }
 });
 
-// Create a request. Accepts EITHER a single role OR an array of roles.
-// (A service may map to multiple helper roles — we match ANY of them.)
 app.post("/api/requests", auth, async (req, res) => {
   try {
     const { role, roles, serviceName, longitude, latitude } = req.body;
 
-    // Normalize to an array of acceptable roles
     let roleList = [];
     if (Array.isArray(roles) && roles.length > 0) roleList = roles;
     else if (role) roleList = [role];
@@ -333,7 +328,6 @@ app.post("/api/requests", auth, async (req, res) => {
         .json({ error: "roles (or role), longitude and latitude are required" });
     }
 
-    // Store a primary role on the request (first one) plus the full accepted set
     const request = new Request({
       patient: req.user.id,
       role: roleList[0],
@@ -343,7 +337,6 @@ app.post("/api/requests", auth, async (req, res) => {
     });
     const savedRequest = await request.save();
 
-    // Find helpers whose role is ANY of the accepted roles, within 2km
     const nearbyHelpers = await HelperProfile.find({
       isAvailable: true,
       roles: { $in: roleList },
