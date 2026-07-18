@@ -36,12 +36,27 @@ mongoose
 // --- SOCKET.IO ---
 io.on("connection", (socket) => {
   console.log("🔌 A device connected:", socket.id);
+
   socket.on("register", (userId) => {
     if (userId) {
       socket.join(userId);
       console.log(`   ↳ joined room: ${userId}`);
     }
   });
+
+  // Helper streams their live position during an active job.
+  // We relay it straight to the patient's room.
+  socket.on("helperLocationUpdate", (data) => {
+    // data: { requestId, patientId, latitude, longitude }
+    if (data?.patientId) {
+      io.to(data.patientId).emit("helperLocation", {
+        requestId: data.requestId,
+        latitude: data.latitude,
+        longitude: data.longitude,
+      });
+    }
+  });
+
   socket.on("disconnect", () => {
     console.log("❌ A device disconnected:", socket.id);
   });
