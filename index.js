@@ -6,6 +6,8 @@ const { Server } = require("socket.io");
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
+const multer = require("multer");
+const cloudinary = require("./cloudinary");
 
 const Service = require("./models/Service");
 const User = require("./models/User");
@@ -15,18 +17,31 @@ const Role = require("./models/Role");
 const auth = require("./middleware/auth");
 
 const app = express();
-
 const server = http.createServer(app);
-const io = new Server(server, {
-  cors: { origin: "*" },
-});
+const io = new Server(server, { cors: { origin: "*" } });
 
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
-// Allow browser-based clients (the admin panel) to call this API
 app.use(cors());
 app.use(express.json());
 app.set("io", io);
+
+// Multer: keep uploaded files in memory as buffers (we stream them to Cloudinary)
+const upload = multer({ storage: multer.memoryStorage() });
+
+// Helper: upload an in-memory file buffer to Cloudinary, return the secure URL
+function uploadToCloudinary(fileBuffer, folder) {
+  return new Promise((resolve, reject) => {
+    const stream = cloudinary.uploader.upload_stream(
+      { folder, resource_type: "image" },
+      (error, result) => {
+        if (error) reject(error);
+        else resolve(result.secure_url);
+      }
+    );
+    stream.end(fileBuffer);
+  });
+}
 
 mongoose
   .connect(process.env.MONGODB_URI)
@@ -36,18 +51,13 @@ mongoose
 // --- SOCKET.IO ---
 io.on("connection", (socket) => {
   console.log("🔌 A device connected:", socket.id);
-
   socket.on("register", (userId) => {
     if (userId) {
       socket.join(userId);
       console.log(`   ↳ joined room: ${userId}`);
     }
   });
-
-  // Helper streams their live position during an active job.
-  // We relay it straight to the patient's room.
   socket.on("helperLocationUpdate", (data) => {
-    // data: { requestId, patientId, latitude, longitude }
     if (data?.patientId) {
       io.to(data.patientId).emit("helperLocation", {
         requestId: data.requestId,
@@ -56,7 +66,6 @@ io.on("connection", (socket) => {
       });
     }
   });
-
   socket.on("disconnect", () => {
     console.log("❌ A device disconnected:", socket.id);
   });
@@ -66,14 +75,13 @@ app.get("/", (req, res) => {
   res.send("Sheba Pai server is alive!");
 });
 
-// --- ROLE GUARDS ---
+// --- GUARDS ---
 function helperOnly(req, res, next) {
   if (req.user.role !== "helper") {
     return res.status(403).json({ error: "Helpers only" });
   }
   next();
 }
-
 function adminOnly(req, res, next) {
   if (req.user.role !== "admin") {
     return res.status(403).json({ error: "Admins only" });
@@ -90,7 +98,6 @@ app.get("/api/roles", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
 app.post("/api/roles", auth, adminOnly, async (req, res) => {
   try {
     const { name, nameBangla } = req.body;
@@ -101,7 +108,6 @@ app.post("/api/roles", auth, adminOnly, async (req, res) => {
     res.status(400).json({ error: err.message });
   }
 });
-
 app.delete("/api/roles/:id", auth, adminOnly, async (req, res) => {
   try {
     const deleted = await Role.findByIdAndDelete(req.params.id);
@@ -121,7 +127,6 @@ app.get("/api/services", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
 app.post("/api/services", auth, adminOnly, async (req, res) => {
   try {
     const newService = new Service({
@@ -135,7 +140,6 @@ app.post("/api/services", auth, adminOnly, async (req, res) => {
     res.status(400).json({ error: err.message });
   }
 });
-
 app.put("/api/services/:id", auth, adminOnly, async (req, res) => {
   try {
     const updated = await Service.findByIdAndUpdate(
@@ -153,7 +157,6 @@ app.put("/api/services/:id", auth, adminOnly, async (req, res) => {
     res.status(400).json({ error: err.message });
   }
 });
-
 app.delete("/api/services/:id", auth, adminOnly, async (req, res) => {
   try {
     const deleted = await Service.findByIdAndDelete(req.params.id);
@@ -185,18 +188,13 @@ app.post("/api/auth/signup", async (req, res) => {
     res.status(400).json({ error: err.message });
   }
 });
-
 app.post("/api/auth/login", async (req, res) => {
   try {
     const { phone, password } = req.body;
     const user = await User.findOne({ phone });
-    if (!user) {
-      return res.status(401).json({ error: "Invalid phone or password" });
-    }
+    if (!user) return res.status(401).json({ error: "Invalid phone or password" });
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(401).json({ error: "Invalid phone or password" });
-    }
+    if (!isMatch) return res.status(401).json({ error: "Invalid phone or password" });
     const token = jwt.sign(
       { id: user._id, role: user.role },
       process.env.JWT_SECRET,
@@ -204,18 +202,12 @@ app.post("/api/auth/login", async (req, res) => {
     );
     res.json({
       token,
-      user: {
-        id: user._id,
-        name: user.name,
-        phone: user.phone,
-        role: user.role,
-      },
+      user: { id: user._id, name: user.name, phone: user.phone, role: user.role },
     });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
 });
-
 app.get("/api/me", auth, async (req, res) => {
   try {
     const user = await User.findById(req.user.id).select("-password");
@@ -240,9 +232,136 @@ app.post("/api/helper/profile", auth, helperOnly, async (req, res) => {
   }
 });
 
+// Get my own helper profile (to know verification status, etc.)
+app.get("/api/helper/profile", auth, helperOnly, async (req, res) => {
+  try {
+    const profile = await HelperProfile.findOne({ user: req.user.id });
+    res.json(profile || null);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// --- VERIFICATION: upload a single document image ---
+// The app sends one image (multipart/form-data) with a "docType" field:
+// "nid" | "certificate" | "selfie"
+app.post(
+  "/api/helper/verification/upload",
+  auth,
+  helperOnly,
+  upload.single("image"),
+  async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "No image provided" });
+      const docType = req.body.docType;
+      if (!["nid", "certificate", "selfie"].includes(docType)) {
+        return res.status(400).json({ error: "Invalid docType" });
+      }
+
+      // Upload the file buffer to Cloudinary
+      const url = await uploadToCloudinary(
+        req.file.buffer,
+        `sheba-pai/verification/${req.user.id}`
+      );
+
+      // Ensure a profile exists
+      let profile = await HelperProfile.findOne({ user: req.user.id });
+      if (!profile) {
+        profile = new HelperProfile({ user: req.user.id, roles: [] });
+      }
+
+      // Save the URL onto the right field
+      if (docType === "nid") profile.nidImageUrl = url;
+      else if (docType === "certificate") profile.certificateUrl = url;
+      else if (docType === "selfie") profile.selfieUrls.push(url);
+
+      await profile.save();
+      res.status(201).json({ url, docType });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  }
+);
+
+// --- VERIFICATION: submit for admin review ---
+app.post("/api/helper/verification/submit", auth, helperOnly, async (req, res) => {
+  try {
+    const { fullName, nidNumber } = req.body;
+    const profile = await HelperProfile.findOne({ user: req.user.id });
+    if (!profile) return res.status(404).json({ error: "Create a profile first" });
+
+    if (!profile.nidImageUrl || profile.selfieUrls.length === 0) {
+      return res
+        .status(400)
+        .json({ error: "NID photo and at least one selfie are required" });
+    }
+
+    profile.fullName = fullName || profile.fullName;
+    profile.nidNumber = nidNumber || profile.nidNumber;
+    profile.verificationStatus = "pending";
+    profile.rejectionReason = null;
+    await profile.save();
+
+    res.json({ message: "Submitted for review", status: "pending" });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// --- ADMIN: list helpers pending review ---
+app.get("/api/admin/verifications", auth, adminOnly, async (req, res) => {
+  try {
+    const status = req.query.status || "pending";
+    const profiles = await HelperProfile.find({ verificationStatus: status })
+      .populate("user", "name phone")
+      .sort({ updatedAt: -1 });
+    res.json(profiles);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// --- ADMIN: approve or reject a helper ---
+app.patch("/api/admin/verifications/:id", auth, adminOnly, async (req, res) => {
+  try {
+    const { decision, rejectionReason } = req.body; // decision: "approve" | "reject"
+    if (!["approve", "reject"].includes(decision)) {
+      return res.status(400).json({ error: "decision must be approve or reject" });
+    }
+    const update =
+      decision === "approve"
+        ? { verificationStatus: "approved", rejectionReason: null, reviewedAt: new Date() }
+        : {
+            verificationStatus: "rejected",
+            rejectionReason: rejectionReason || "Documents not acceptable",
+            reviewedAt: new Date(),
+          };
+
+    const profile = await HelperProfile.findByIdAndUpdate(req.params.id, update, {
+      new: true,
+    }).populate("user", "name phone");
+
+    if (!profile) return res.status(404).json({ error: "Profile not found" });
+    res.json(profile);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.patch("/api/helper/location", auth, helperOnly, async (req, res) => {
   try {
     const { longitude, latitude, isAvailable } = req.body;
+
+    // ENFORCEMENT: only approved helpers may go online
+    if (isAvailable) {
+      const profile = await HelperProfile.findOne({ user: req.user.id });
+      if (!profile || profile.verificationStatus !== "approved") {
+        return res
+          .status(403)
+          .json({ error: "আপনার অ্যাকাউন্ট এখনো যাচাই করা হয়নি" });
+      }
+    }
+
     const profile = await HelperProfile.findOneAndUpdate(
       { user: req.user.id },
       {
@@ -251,9 +370,7 @@ app.patch("/api/helper/location", auth, helperOnly, async (req, res) => {
       },
       { new: true }
     );
-    if (!profile) {
-      return res.status(404).json({ error: "Create a helper profile first" });
-    }
+    if (!profile) return res.status(404).json({ error: "Create a helper profile first" });
     res.json(profile);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -263,18 +380,13 @@ app.patch("/api/helper/location", auth, helperOnly, async (req, res) => {
 app.get("/api/helper/requests", auth, helperOnly, async (req, res) => {
   try {
     const profile = await HelperProfile.findOne({ user: req.user.id });
-    if (!profile) {
-      return res.status(404).json({ error: "Create a helper profile first" });
-    }
+    if (!profile) return res.status(404).json({ error: "Create a helper profile first" });
     const requests = await Request.find({
       status: "searching",
       role: { $in: profile.roles },
       location: {
         $near: {
-          $geometry: {
-            type: "Point",
-            coordinates: profile.location.coordinates,
-          },
+          $geometry: { type: "Point", coordinates: profile.location.coordinates },
           $maxDistance: 2000,
         },
       },
@@ -292,12 +404,11 @@ app.get("/api/helpers/nearby", auth, async (req, res) => {
     const latitude = parseFloat(req.query.latitude);
     const role = req.query.role;
     if (isNaN(longitude) || isNaN(latitude) || !role) {
-      return res
-        .status(400)
-        .json({ error: "longitude, latitude and role are required" });
+      return res.status(400).json({ error: "longitude, latitude and role are required" });
     }
     const helpers = await HelperProfile.find({
       isAvailable: true,
+      verificationStatus: "approved",
       roles: role,
       location: {
         $near: {
@@ -332,17 +443,12 @@ app.get("/api/requests/active", auth, async (req, res) => {
 app.post("/api/requests", auth, async (req, res) => {
   try {
     const { role, roles, serviceName, longitude, latitude } = req.body;
-
     let roleList = [];
     if (Array.isArray(roles) && roles.length > 0) roleList = roles;
     else if (role) roleList = [role];
-
     if (roleList.length === 0 || longitude === undefined || latitude === undefined) {
-      return res
-        .status(400)
-        .json({ error: "roles (or role), longitude and latitude are required" });
+      return res.status(400).json({ error: "roles (or role), longitude and latitude are required" });
     }
-
     const request = new Request({
       patient: req.user.id,
       role: roleList[0],
@@ -354,6 +460,7 @@ app.post("/api/requests", auth, async (req, res) => {
 
     const nearbyHelpers = await HelperProfile.find({
       isAvailable: true,
+      verificationStatus: "approved",
       roles: { $in: roleList },
       location: {
         $near: {
@@ -390,13 +497,9 @@ app.patch("/api/requests/:id/accept", auth, helperOnly, async (req, res) => {
       { status: "accepted", helper: req.user.id },
       { new: true }
     ).populate("helper", "name phone");
-
     if (!updated) {
-      return res
-        .status(409)
-        .json({ error: "This request was already taken or does not exist" });
+      return res.status(409).json({ error: "This request was already taken or does not exist" });
     }
-
     const io = req.app.get("io");
     io.to(updated.patient.toString()).emit("requestAccepted", updated);
     res.json(updated);
@@ -410,28 +513,19 @@ const transitions = {
   on_the_way: "helping",
   helping: "completed",
 };
-
 app.patch("/api/requests/:id/status", auth, helperOnly, async (req, res) => {
   try {
     const requestId = req.params.id;
     const { nextStatus } = req.body;
-    const validFrom = Object.keys(transitions).find(
-      (from) => transitions[from] === nextStatus
-    );
-    if (!validFrom) {
-      return res
-        .status(400)
-        .json({ error: `Cannot transition to '${nextStatus}'` });
-    }
+    const validFrom = Object.keys(transitions).find((f) => transitions[f] === nextStatus);
+    if (!validFrom) return res.status(400).json({ error: `Cannot transition to '${nextStatus}'` });
     const updated = await Request.findOneAndUpdate(
       { _id: requestId, status: validFrom, helper: req.user.id },
       { status: nextStatus },
       { new: true }
     );
     if (!updated) {
-      return res.status(409).json({
-        error: `Request is not in '${validFrom}' state, or is not yours`,
-      });
+      return res.status(409).json({ error: `Request is not in '${validFrom}' state, or is not yours` });
     }
     const io = req.app.get("io");
     io.to(updated.patient.toString()).emit("requestUpdated", updated);
@@ -451,9 +545,7 @@ app.patch("/api/requests/:id/cancel", auth, async (req, res) => {
       { new: true }
     );
     if (!updated) {
-      return res
-        .status(409)
-        .json({ error: "Request cannot be cancelled (already finished?)" });
+      return res.status(409).json({ error: "Request cannot be cancelled (already finished?)" });
     }
     res.json(updated);
   } catch (err) {
