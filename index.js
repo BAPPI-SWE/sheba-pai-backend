@@ -14,6 +14,10 @@ const User = require("./models/User");
 const HelperProfile = require("./models/HelperProfile");
 const Request = require("./models/Request");
 const Role = require("./models/Role");
+const Requirement = require("./models/Requirement");
+const RequirementSubmission = require("./models/RequirementSubmission");
+const HelperService = require("./models/HelperService");
+const servicesRoutes = require("./servicesRoutes");
 const auth = require("./middleware/auth");
 
 const app = express();
@@ -104,49 +108,6 @@ app.delete("/api/roles/:id", auth, adminOnly, async (req, res) => {
     const deleted = await Role.findByIdAndDelete(req.params.id);
     if (!deleted) return res.status(404).json({ error: "Role not found" });
     res.json({ message: "Role deleted", id: req.params.id });
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-
-// --- SERVICES ---
-app.get("/api/services", async (req, res) => {
-  try {
-    res.json(await Service.find());
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-app.post("/api/services", auth, adminOnly, async (req, res) => {
-  try {
-    const saved = await new Service({
-      name: req.body.name,
-      nameBangla: req.body.nameBangla,
-      helperRoles: req.body.helperRoles,
-    }).save();
-    res.status(201).json(saved);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-app.put("/api/services/:id", auth, adminOnly, async (req, res) => {
-  try {
-    const updated = await Service.findByIdAndUpdate(
-      req.params.id,
-      { name: req.body.name, nameBangla: req.body.nameBangla, helperRoles: req.body.helperRoles },
-      { new: true, runValidators: true }
-    );
-    if (!updated) return res.status(404).json({ error: "Service not found" });
-    res.json(updated);
-  } catch (err) {
-    res.status(400).json({ error: err.message });
-  }
-});
-app.delete("/api/services/:id", auth, adminOnly, async (req, res) => {
-  try {
-    const deleted = await Service.findByIdAndDelete(req.params.id);
-    if (!deleted) return res.status(404).json({ error: "Service not found" });
-    res.json({ message: "Service deleted", id: req.params.id });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -477,6 +438,9 @@ app.patch("/api/requests/:id/cancel", auth, async (req, res) => {
     res.status(400).json({ error: err.message });
   }
 });
+
+// --- PHASE 3: services tree, requirements, submissions, helper offerings ---
+servicesRoutes(app, { auth, adminOnly, helperOnly, upload, uploadToCloudinary });
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running at http://localhost:${PORT}`);
