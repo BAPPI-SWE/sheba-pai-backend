@@ -42,8 +42,7 @@ module.exports = function servicesRoutes(app, deps) {
 
   app.post("/api/services", auth, adminOnly, async (req, res) => {
     try {
-      const { name, nameBangla, parent, helperRoles, description,
-              suggestedMinRate, suggestedMaxRate, sortOrder } = req.body;
+      const { name, nameBangla, parent, helperRoles, description, sortOrder } = req.body;
 
       // Enforce two levels only: a sub-service's parent must be a main service
       if (parent) {
@@ -56,7 +55,10 @@ module.exports = function servicesRoutes(app, deps) {
         name, nameBangla,
         parent: parent || null,
         helperRoles: helperRoles || [],
-        description, suggestedMinRate, suggestedMaxRate,
+        chargeType: req.body.chargeType || "hourly",
+        pricingMode: req.body.pricingMode || "helper_flexible",
+        adminAmount: req.body.adminAmount != null ? req.body.adminAmount : null,
+        description,
         sortOrder: sortOrder || 0,
       }).save();
       res.status(201).json(saved);
@@ -117,6 +119,20 @@ module.exports = function servicesRoutes(app, deps) {
         maxPhotos: Math.min(maxPhotos || 3, 3),
       }).save();
       res.status(201).json(saved);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  app.put("/api/requirements/:id", auth, adminOnly, async (req, res) => {
+    try {
+      const allowed = ["title", "titleBangla", "hint", "hintBangla", "isMandatory", "maxPhotos", "forWhom", "isActive"];
+      const update = {};
+      allowed.forEach((k) => { if (req.body[k] !== undefined) update[k] = req.body[k]; });
+      if (update.maxPhotos) update.maxPhotos = Math.min(update.maxPhotos, 3);
+      const updated = await Requirement.findByIdAndUpdate(req.params.id, update, { new: true, runValidators: true });
+      if (!updated) return res.status(404).json({ error: "Requirement not found" });
+      res.json(updated);
     } catch (err) {
       res.status(400).json({ error: err.message });
     }

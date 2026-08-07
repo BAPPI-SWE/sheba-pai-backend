@@ -1,39 +1,21 @@
 const mongoose = require("mongoose");
 
 /**
- * A document/proof a service demands.
- *
- * forWhom:
- *   "helper"  -> the caregiver must provide it to offer this service
- *   "patient" -> the patient must provide it to request this service
- *
- * Attached to a MAIN service  = common requirement for everything under it.
- * Attached to a SUB-service   = specific requirement for that sub-service.
+ * A document/proof a service demands, editable in place.
+ * Editing reflects everywhere because submissions reference it by id.
  */
 const requirementSchema = new mongoose.Schema(
   {
-    service: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Service",
-      required: true,
-    },
+    service: { type: mongoose.Schema.Types.ObjectId, ref: "Service", required: true },
+    forWhom: { type: String, enum: ["helper", "patient"], required: true },
 
-    forWhom: {
-      type: String,
-      enum: ["helper", "patient"],
-      required: true,
-    },
-
-    title: { type: String, required: true },        // e.g. "Nursing certificate"
-    titleBangla: { type: String, required: true },  // e.g. "নার্সিং সনদ"
-
-    // Shown as guidance while uploading
+    title: { type: String, required: true },
+    titleBangla: { type: String, required: true },
     hint: { type: String, default: null },
     hintBangla: { type: String, default: null },
 
     isMandatory: { type: Boolean, default: true },
     maxPhotos: { type: Number, default: 3, min: 1, max: 3 },
-
     isActive: { type: Boolean, default: true },
   },
   { timestamps: true }

@@ -1,32 +1,45 @@
 const mongoose = require("mongoose");
 
 /**
- * A service the platform offers.
- * Two levels only:
- *   - Main service:  parent = null
- *   - Sub-service:   parent = <main service id>
+ * A service the platform offers. Two levels only:
+ *   - Main service: parent = null
+ *   - Sub-service:  parent = <main service id>
  *
- * Roles are set on the MAIN service. A helper who picks a profession (role)
- * only sees main services matching that role, and the sub-services under them.
+ * Editing a service's fields reflects everywhere automatically, because
+ * everything else references it by id (never copies its data).
  */
 const serviceSchema = new mongoose.Schema(
   {
-    name: { type: String, required: true },        // English
-    nameBangla: { type: String, required: true },  // Bangla
+    name: { type: String, required: true },
+    nameBangla: { type: String, required: true },
 
-    // null = this is a main service; otherwise it's a sub-service
     parent: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Service",
       default: null,
     },
 
-    // Which helper roles can perform this. Set on main services.
+    // Roles set on MAIN services; sub-services inherit context from parent.
     helperRoles: { type: [String], default: [] },
 
-    // Optional guidance for pricing (helpers set their own rate within these)
-    suggestedMinRate: { type: Number, default: null },
-    suggestedMaxRate: { type: Number, default: null },
+    // ---- PRICING (sub-services) ----
+    // How the charge is structured — admin's structural choice:
+    chargeType: {
+      type: String,
+      enum: ["hourly", "fixed"],
+      default: "hourly",
+    },
+    // Who controls the AMOUNT:
+    //   "admin_fixed"      -> admin sets amount, helper cannot change
+    //   "admin_default"    -> admin sets a starting amount, helper may edit
+    //   "helper_flexible"  -> helper sets their own amount
+    pricingMode: {
+      type: String,
+      enum: ["admin_fixed", "admin_default", "helper_flexible"],
+      default: "helper_flexible",
+    },
+    // Amount used by admin_fixed / admin_default modes
+    adminAmount: { type: Number, default: null },
 
     description: { type: String, default: null },
     isActive: { type: Boolean, default: true },
