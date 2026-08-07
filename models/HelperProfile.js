@@ -2,39 +2,37 @@ const mongoose = require("mongoose");
 
 const helperProfileSchema = new mongoose.Schema(
   {
-    user: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: true,
-      unique: true,
-    },
+    user: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true, unique: true },
     roles: { type: [String], required: true },
+
+    // NEW: single chosen profession (one of the admin-defined role names).
+    // Drives which services this helper can offer.
+    profession: { type: String, default: null },
+
+    // Optional second contact number
+    altPhone: { type: String, default: null },
+
     isAvailable: { type: Boolean, default: false },
     location: {
       type: { type: String, enum: ["Point"], default: "Point" },
       coordinates: { type: [Number], default: [0, 0] },
     },
 
-    // --- VERIFICATION ---
+    // --- IDENTITY VERIFICATION (unchanged) ---
     verificationStatus: {
       type: String,
       enum: ["unsubmitted", "pending", "approved", "rejected"],
       default: "unsubmitted",
     },
-
-    // Cloudinary URLs
     nidFrontUrl: { type: String, default: null },
     nidBackUrl: { type: String, default: null },
     selfieUrls: { type: [String], default: [] },
-    certificateUrls: { type: [String], default: [] },  // up to 10
+    certificateUrls: { type: [String], default: [] },
     policeClearanceUrl: { type: String, default: null },
-
     fullName: { type: String, default: null },
     nidNumber: { type: String, default: null },
-
     consentAccepted: { type: Boolean, default: false },
     consentAcceptedAt: { type: Date, default: null },
-
     rejectionReason: { type: String, default: null },
     reviewedAt: { type: Date, default: null },
   },

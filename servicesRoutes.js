@@ -10,10 +10,28 @@ const Service = require("./models/Service");
 const Requirement = require("./models/Requirement");
 const RequirementSubmission = require("./models/RequirementSubmission");
 const HelperService = require("./models/HelperService");
+const HelperProfile = require("./models/HelperProfile");
 const { checkEligibility, getRequirementsWithStatus } = require("./eligibility");
 
 module.exports = function servicesRoutes(app, deps) {
   const { auth, adminOnly, helperOnly, upload, uploadToCloudinary } = deps;
+
+  // Save the helper's chosen profession (role) + optional alt phone.
+  // Also mirrors profession into roles[] so existing matching keeps working.
+  app.patch("/api/helper/profession", auth, helperOnly, async (req, res) => {
+    try {
+      const { profession, altPhone } = req.body;
+      if (!profession) return res.status(400).json({ error: "profession is required" });
+      const profile = await HelperProfile.findOneAndUpdate(
+        { user: req.user.id },
+        { profession, altPhone: altPhone || null, roles: [profession] },
+        { new: true, upsert: true }
+      );
+      res.json(profile);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
 
   // ---------------- SERVICES ----------------
 
