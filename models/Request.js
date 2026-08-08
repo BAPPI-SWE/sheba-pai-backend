@@ -26,6 +26,13 @@ const requestSchema = new mongoose.Schema(
       ref: "User",
       default: null,
     },
+    // Browse-and-choose: the specific helpers this request was sent to.
+    // Empty = broadcast (old auto-dispatch). Non-empty = only these helpers see it.
+    targetedHelpers: {
+      type: [mongoose.Schema.Types.ObjectId],
+      ref: "User",
+      default: [],
+    },
     status: {
       type: String,
       enum: [

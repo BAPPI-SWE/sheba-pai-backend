@@ -19,6 +19,7 @@ const RequirementSubmission = require("./models/RequirementSubmission");
 const HelperService = require("./models/HelperService");
 const servicesRoutes = require("./servicesRoutes");
 const ratingsRoutes = require("./ratingsRoutes");
+const browseRoutes = require("./browseRoutes");
 const auth = require("./middleware/auth");
 
 const app = express();
@@ -300,16 +301,23 @@ app.get("/api/helper/requests", auth, helperOnly, async (req, res) => {
   try {
     const profile = await HelperProfile.findOne({ user: req.user.id });
     if (!profile) return res.status(404).json({ error: "Create a helper profile first" });
+    const helperId = req.user.id;
+    // Requests still searching that are either:
+    //   - targeted specifically at this helper, OR
+    //   - broadcast (no targetedHelpers) matching this helper's roles
     const requests = await Request.find({
       status: "searching",
-      role: { $in: profile.roles },
+      $or: [
+        { targetedHelpers: helperId },
+        { targetedHelpers: { $size: 0 }, role: { $in: profile.roles } },
+      ],
       location: {
         $near: {
           $geometry: { type: "Point", coordinates: profile.location.coordinates },
-          $maxDistance: 2000,
+          $maxDistance: 20000,
         },
       },
-    });
+    }).populate("patient", "name");
     res.json(requests);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -340,11 +348,20 @@ app.get("/api/helpers/nearby", auth, async (req, res) => {
 
 app.get("/api/requests/active", auth, async (req, res) => {
   try {
-    const activeStates = ["searching", "accepted", "on_the_way", "helping"];
-    const query = req.user.role === "helper"
-      ? { helper: req.user.id, status: { $in: activeStates } }
-      : { patient: req.user.id, status: { $in: activeStates } };
-    const request = await Request.findOne(query).sort({ createdAt: -1 }).populate("helper", "name phone");
+    const activeStates = ["accepted", "on_the_way", "helping"];
+    if (req.user.role === "helper") {
+      // Multi-job: a helper can have several active jobs at once
+      const requests = await Request.find({
+        helper: req.user.id,
+        status: { $in: activeStates },
+      }).sort({ createdAt: -1 }).populate("patient", "name phone");
+      return res.json({ requests, request: requests[0] || null });
+    }
+    // Patient: still one active request at a time
+    const request = await Request.findOne({
+      patient: req.user.id,
+      status: { $in: [...activeStates, "searching"] },
+    }).sort({ createdAt: -1 }).populate("helper", "name phone");
     res.json({ request: request || null });
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -445,6 +462,9 @@ servicesRoutes(app, { auth, adminOnly, helperOnly, upload, uploadToCloudinary })
 
 // --- RATINGS: rate a completed job (both directions), read summaries ---
 ratingsRoutes(app, { auth });
+
+// --- BROWSE-AND-CHOOSE: paginated nearby helpers, request specific helpers ---
+browseRoutes(app, { auth });
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running at http://localhost:${PORT}`);
