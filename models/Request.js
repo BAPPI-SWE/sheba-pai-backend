@@ -54,7 +54,7 @@ const requestSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Geospatial index — required for $near queries on requests
+// Geospatial index — required for $near queries on requestss
 requestSchema.index({ location: "2dsphere" });
 
 module.exports = mongoose.model("Request", requestSchema);
