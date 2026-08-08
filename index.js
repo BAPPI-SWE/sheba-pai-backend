@@ -19,6 +19,7 @@ const RequirementSubmission = require("./models/RequirementSubmission");
 const HelperService = require("./models/HelperService");
 const servicesRoutes = require("./servicesRoutes");
 const auth = require("./middleware/auth");
+const ratingsRoutes = require("./ratingsRoutes");
 
 const app = express();
 const server = http.createServer(app);
@@ -441,6 +442,8 @@ app.patch("/api/requests/:id/cancel", auth, async (req, res) => {
 
 // --- PHASE 3: services tree, requirements, submissions, helper offerings ---
 servicesRoutes(app, { auth, adminOnly, helperOnly, upload, uploadToCloudinary });
+
+ratingsRoutes(app, { auth });
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running at http://localhost:${PORT}`);

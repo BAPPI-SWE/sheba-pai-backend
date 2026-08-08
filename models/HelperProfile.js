@@ -12,6 +12,10 @@ const helperProfileSchema = new mongoose.Schema(
     // Optional second contact number
     altPhone: { type: String, default: null },
 
+    // Rating aggregate (recomputed on each new rating)
+    ratingAvg: { type: Number, default: 0 },
+    ratingCount: { type: Number, default: 0 },
+
     isAvailable: { type: Boolean, default: false },
     location: {
       type: { type: String, enum: ["Point"], default: "Point" },

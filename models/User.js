@@ -11,6 +11,10 @@ const userSchema = new mongoose.Schema(
       default: "patient",
     },
     language: { type: String, default: "bn" },
+
+    ratingAvg: { type: Number, default: 0 },
+    ratingCount: { type: Number, default: 0 },
+
   },
   { timestamps: true }
 );
