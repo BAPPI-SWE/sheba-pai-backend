@@ -12,9 +12,10 @@ const userSchema = new mongoose.Schema(
     },
     language: { type: String, default: "bn" },
 
+    // Rating aggregate (recomputed on each new rating this user receives).
+    // Used so patients can be rated by helpers too.
     ratingAvg: { type: Number, default: 0 },
     ratingCount: { type: Number, default: 0 },
-
   },
   { timestamps: true }
 );

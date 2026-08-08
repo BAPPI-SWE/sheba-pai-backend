@@ -18,8 +18,8 @@ const Requirement = require("./models/Requirement");
 const RequirementSubmission = require("./models/RequirementSubmission");
 const HelperService = require("./models/HelperService");
 const servicesRoutes = require("./servicesRoutes");
-const auth = require("./middleware/auth");
 const ratingsRoutes = require("./ratingsRoutes");
+const auth = require("./middleware/auth");
 
 const app = express();
 const server = http.createServer(app);
@@ -443,6 +443,7 @@ app.patch("/api/requests/:id/cancel", auth, async (req, res) => {
 // --- PHASE 3: services tree, requirements, submissions, helper offerings ---
 servicesRoutes(app, { auth, adminOnly, helperOnly, upload, uploadToCloudinary });
 
+// --- RATINGS: rate a completed job (both directions), read summaries ---
 ratingsRoutes(app, { auth });
 
 server.listen(PORT, "0.0.0.0", () => {
