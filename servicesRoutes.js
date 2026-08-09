@@ -16,6 +16,38 @@ const { checkEligibility, getRequirementsWithStatus } = require("./eligibility")
 module.exports = function servicesRoutes(app, deps) {
   const { auth, adminOnly, helperOnly, upload, uploadToCloudinary } = deps;
 
+  // Overall helper readiness: identity status + whether they have any
+  // APPROVED (eligible) service offering. Drives app routing after login.
+  app.get("/api/helper/readiness", auth, helperOnly, async (req, res) => {
+    try {
+      const profile = await HelperProfile.findOne({ user: req.user.id });
+      const identityStatus = profile?.verificationStatus || "unsubmitted";
+
+      const offerings = await HelperService.find({ helper: req.user.id, isActive: true });
+      let eligibleCount = 0;
+      let pendingCount = 0;
+      for (const o of offerings) {
+        const elig = await checkEligibility(req.user.id, o.service, "helper");
+        if (elig.eligible) eligibleCount++;
+        else pendingCount++;
+      }
+
+      // "live" = identity approved AND at least one fully-eligible service
+      const isLive = identityStatus === "approved" && eligibleCount > 0;
+
+      res.json({
+        identityStatus,
+        offeringsTotal: offerings.length,
+        eligibleCount,
+        pendingCount,
+        isLive,
+        hasProfession: !!profile?.profession,
+      });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   // Save the helper's chosen profession (role) + optional alt phone.
   // Also mirrors profession into roles[] so existing matching keeps working.
   app.patch("/api/helper/profession", auth, helperOnly, async (req, res) => {
