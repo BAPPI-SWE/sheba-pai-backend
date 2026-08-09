@@ -11,7 +11,7 @@ const HelperService = require("./models/HelperService");
 const Service = require("./models/Service");
 const Request = require("./models/Request");
 const User = require("./models/User");
-const { isHelperClearedForService } = require("./eligibility");
+const { isHelperClearedForService, isPatientClearedForService } = require("./eligibility");
 
 // Haversine distance in km between two [lng,lat] points
 function distanceKm(lng1, lat1, lng2, lat2) {
@@ -28,6 +28,18 @@ function distanceKm(lng1, lat1, lng2, lat2) {
 
 module.exports = function browseRoutes(app, deps) {
   const { auth } = deps;
+
+  // Does this patient need to upload/await approval before requesting this service?
+  app.get("/api/browse/patient-check", auth, async (req, res) => {
+    try {
+      const { subServiceId } = req.query;
+      if (!subServiceId) return res.status(400).json({ error: "subServiceId required" });
+      const pc = await isPatientClearedForService(req.user.id, subServiceId);
+      res.json(pc);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
 
   /**
    * GET /api/browse/helpers
@@ -124,6 +136,19 @@ module.exports = function browseRoutes(app, deps) {
       }
       if (longitude === undefined || latitude === undefined) {
         return res.status(400).json({ error: "longitude and latitude required" });
+      }
+
+      // Patient-side gating for sensitive services
+      if (subServiceId) {
+        const pc = await isPatientClearedForService(req.user.id, subServiceId);
+        if (!pc.allowed) {
+          return res.status(403).json({
+            error: "patient_verification_required",
+            needsUpload: pc.needsUpload,
+            mode: pc.mode,
+            reason: pc.reason,
+          });
+        }
       }
 
       const roleList = Array.isArray(roles) && roles.length ? roles : [];

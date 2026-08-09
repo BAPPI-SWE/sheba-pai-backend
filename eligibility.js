@@ -114,3 +114,36 @@ async function isHelperClearedForService(userId, serviceId) {
 }
 
 module.exports.isHelperClearedForService = isHelperClearedForService;
+
+/**
+ * Whether a patient may request a service, based on the service's
+ * patientVerificationMode and the patient's requirement submissions.
+ * Returns { allowed, mode, needsUpload, reason }.
+ *   - "none":     always allowed, no upload needed.
+ *   - "submit":   allowed once docs are SUBMITTED (pending ok); needsUpload if missing.
+ *   - "approved": allowed only when mandatory patient reqs are APPROVED.
+ */
+async function isPatientClearedForService(userId, serviceId) {
+  const Service = require("./models/Service");
+  const service = await Service.findById(serviceId);
+  if (!service) return { allowed: false, mode: "none", needsUpload: false, reason: "no_service" };
+
+  const mode = service.patientVerificationMode || "none";
+  if (mode === "none") return { allowed: true, mode, needsUpload: false, reason: null };
+
+  const elig = await checkEligibility(userId, serviceId, "patient");
+
+  if (mode === "approved") {
+    if (elig.eligible) return { allowed: true, mode, needsUpload: false, reason: null };
+    // missing = never submitted or rejected; pending counts as not-yet-approved
+    const needsUpload = elig.missing.length > 0;
+    return { allowed: false, mode, needsUpload, reason: needsUpload ? "needs_upload" : "pending_approval" };
+  }
+
+  // mode === "submit": allowed once nothing mandatory is still missing
+  // (pending is fine; only un-submitted/rejected blocks)
+  if (elig.missing.length === 0) return { allowed: true, mode, needsUpload: false, reason: null };
+  return { allowed: false, mode, needsUpload: true, reason: "needs_upload" };
+}
+
+module.exports.isPatientClearedForService = isPatientClearedForService;

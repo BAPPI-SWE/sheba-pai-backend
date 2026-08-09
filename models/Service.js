@@ -41,6 +41,16 @@ const serviceSchema = new mongoose.Schema(
     // Amount used by admin_fixed / admin_default modes
     adminAmount: { type: Number, default: null },
 
+    // Patient-side gating for sensitive services:
+    //   "none"     -> no patient requirements (default; one-tap request)
+    //   "submit"   -> patient must upload docs before requesting (approval can follow)
+    //   "approved" -> patient must be fully approved before requesting
+    patientVerificationMode: {
+      type: String,
+      enum: ["none", "submit", "approved"],
+      default: "none",
+    },
+
     description: { type: String, default: null },
     isActive: { type: Boolean, default: true },
     sortOrder: { type: Number, default: 0 },
