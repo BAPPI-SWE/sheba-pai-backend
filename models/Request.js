@@ -33,6 +33,12 @@ const requestSchema = new mongoose.Schema(
       ref: "User",
       default: [],
     },
+    // The specific sub-service requested (drives eligibility gating at accept).
+    subService: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Service",
+      default: null,
+    },
     status: {
       type: String,
       enum: [

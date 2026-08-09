@@ -20,6 +20,7 @@ const HelperService = require("./models/HelperService");
 const servicesRoutes = require("./servicesRoutes");
 const ratingsRoutes = require("./ratingsRoutes");
 const browseRoutes = require("./browseRoutes");
+const { isHelperClearedForService } = require("./eligibility");
 const auth = require("./middleware/auth");
 
 const app = express();
@@ -318,7 +319,20 @@ app.get("/api/helper/requests", auth, helperOnly, async (req, res) => {
         },
       },
     }).populate("patient", "name");
-    res.json(requests);
+
+    // Gate: hide requests whose sub-service this helper isn't cleared for.
+    // (Identity is checked inside isHelperClearedForService too.)
+    const visible = [];
+    for (const r of requests) {
+      if (r.subService) {
+        const clearance = await isHelperClearedForService(req.user.id, r.subService);
+        if (clearance.cleared) visible.push(r);
+      } else {
+        // Legacy/broadcast request: require approved identity at minimum
+        if (profile.verificationStatus === "approved") visible.push(r);
+      }
+    }
+    res.json(visible);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -410,6 +424,22 @@ app.post("/api/requests", auth, async (req, res) => {
 
 app.patch("/api/requests/:id/accept", auth, helperOnly, async (req, res) => {
   try {
+    // Safety gate: identity approved AND service requirements approved.
+    const reqDoc = await Request.findById(req.params.id);
+    if (!reqDoc) return res.status(404).json({ error: "Request not found" });
+    if (reqDoc.subService) {
+      const clearance = await isHelperClearedForService(req.user.id, reqDoc.subService);
+      if (!clearance.cleared) {
+        return res.status(403).json({ error: "You are not verified for this service yet", reason: clearance.reason });
+      }
+    } else {
+      // Legacy/broadcast request without a sub-service: at least require approved identity
+      const profile = await HelperProfile.findOne({ user: req.user.id });
+      if (!profile || profile.verificationStatus !== "approved") {
+        return res.status(403).json({ error: "Your account is not verified yet" });
+      }
+    }
+
     const updated = await Request.findOneAndUpdate(
       { _id: req.params.id, status: "searching" },
       { status: "accepted", helper: req.user.id },

@@ -92,3 +92,25 @@ async function getRequirementsWithStatus(userId, serviceId, forWhom) {
 }
 
 module.exports = { checkEligibility, getRequirementsWithStatus };
+
+const HelperProfile = require("./models/HelperProfile");
+
+/**
+ * The single source of truth for "can this helper work this service right now?"
+ * Requires BOTH:
+ *   1. identity verification approved, AND
+ *   2. all mandatory helper-requirements for the service (and its parent) approved.
+ * Returns { cleared: bool, reason: string|null }.
+ */
+async function isHelperClearedForService(userId, serviceId) {
+  const profile = await HelperProfile.findOne({ user: userId });
+  if (!profile) return { cleared: false, reason: "no_profile" };
+  if (profile.verificationStatus !== "approved") {
+    return { cleared: false, reason: "identity_not_approved" };
+  }
+  const elig = await checkEligibility(userId, serviceId, "helper");
+  if (!elig.eligible) return { cleared: false, reason: "requirements_not_approved" };
+  return { cleared: true, reason: null };
+}
+
+module.exports.isHelperClearedForService = isHelperClearedForService;

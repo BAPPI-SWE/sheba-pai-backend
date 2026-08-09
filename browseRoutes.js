@@ -11,6 +11,7 @@ const HelperService = require("./models/HelperService");
 const Service = require("./models/Service");
 const Request = require("./models/Request");
 const User = require("./models/User");
+const { isHelperClearedForService } = require("./eligibility");
 
 // Haversine distance in km between two [lng,lat] points
 function distanceKm(lng1, lat1, lng2, lat2) {
@@ -77,7 +78,16 @@ module.exports = function browseRoutes(app, deps) {
       const hasMore = profiles.length > limit;
       const page = profiles.slice(0, limit);
 
-      const helpers = page.map((p) => {
+      // Gate: only include helpers whose mandatory requirements for THIS
+      // sub-service (and its parent) are approved. Identity is already
+      // filtered above (verificationStatus: "approved").
+      const clearedPage = [];
+      for (const p of page) {
+        const clearance = await isHelperClearedForService(p.user._id, subServiceId);
+        if (clearance.cleared) clearedPage.push(p);
+      }
+
+      const helpers = clearedPage.map((p) => {
         const offering = offeringByHelper[p.user._id.toString()];
         const [hLng, hLat] = p.location.coordinates;
         const dist = distanceKm(longitude, latitude, hLng, hLat);
@@ -122,6 +132,7 @@ module.exports = function browseRoutes(app, deps) {
         role: roleList[0] || "any",
         acceptedRoles: roleList,
         serviceName: serviceName || "Service",
+        subService: subServiceId,
         location: { type: "Point", coordinates: [longitude, latitude] },
         targetedHelpers: helperIds,
       });
