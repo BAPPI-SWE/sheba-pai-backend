@@ -49,9 +49,16 @@ const requestSchema = new mongoose.Schema(
         "completed",
         "cancelled",
         "no_helper_found",
+        "no_show",
       ],
       default: "searching",
     },
+    // Cancellation / no-show accountability
+    cancelledBy: { type: String, enum: ["patient", "helper", null], default: null },
+    cancelReason: { type: String, default: null },
+    noShowReportedBy: { type: String, enum: ["patient", "helper", null], default: null },
+    noShowReason: { type: String, default: null },
+    endedAt: { type: Date, default: null },
     location: {
       type: {
         type: String,

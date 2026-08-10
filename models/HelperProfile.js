@@ -15,6 +15,9 @@ const helperProfileSchema = new mongoose.Schema(
     // Rating aggregate (recomputed on each new rating)
     ratingAvg: { type: Number, default: 0 },
     ratingCount: { type: Number, default: 0 },
+    // Accountability counters (admin reviews patterns)
+    cancelCount: { type: Number, default: 0 },
+    noShowCount: { type: Number, default: 0 },
 
     isAvailable: { type: Boolean, default: false },
     location: {

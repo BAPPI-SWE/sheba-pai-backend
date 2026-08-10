@@ -16,6 +16,9 @@ const userSchema = new mongoose.Schema(
     // Used so patients can be rated by helpers too.
     ratingAvg: { type: Number, default: 0 },
     ratingCount: { type: Number, default: 0 },
+    // Accountability counters (admin reviews patterns)
+    cancelCount: { type: Number, default: 0 },
+    noShowCount: { type: Number, default: 0 },
   },
   { timestamps: true }
 );

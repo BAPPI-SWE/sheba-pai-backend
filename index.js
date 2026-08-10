@@ -474,14 +474,89 @@ app.patch("/api/requests/:id/status", auth, helperOnly, async (req, res) => {
 
 app.patch("/api/requests/:id/cancel", auth, async (req, res) => {
   try {
+    const { reason } = req.body;
     const activeStates = ["searching", "accepted", "on_the_way", "helping"];
-    const updated = await Request.findOneAndUpdate(
-      { _id: req.params.id, status: { $in: activeStates } },
-      { status: "cancelled" },
-      { new: true }
-    );
-    if (!updated) return res.status(409).json({ error: "Request cannot be cancelled (already finished?)" });
-    res.json(updated);
+    const request = await Request.findById(req.params.id);
+    if (!request) return res.status(404).json({ error: "Request not found" });
+    if (!activeStates.includes(request.status)) {
+      return res.status(409).json({ error: "Request cannot be cancelled (already finished?)" });
+    }
+
+    // Who is cancelling?
+    const meId = req.user.id;
+    const isPatient = request.patient?.toString() === meId;
+    const isHelper = request.helper?.toString() === meId;
+    if (!isPatient && !isHelper) {
+      return res.status(403).json({ error: "You are not part of this request" });
+    }
+    const by = isPatient ? "patient" : "helper";
+
+    request.status = "cancelled";
+    request.cancelledBy = by;
+    request.cancelReason = reason || null;
+    request.endedAt = new Date();
+    await request.save();
+
+    // Accountability: count a cancellation only if a helper had already accepted
+    // (cancelling an un-accepted search is blameless).
+    const wasAccepted = request.helper != null;
+    if (wasAccepted) {
+      if (by === "patient") {
+        await User.findByIdAndUpdate(request.patient, { $inc: { cancelCount: 1 } });
+      } else {
+        await HelperProfile.findOneAndUpdate({ user: request.helper }, { $inc: { cancelCount: 1 } });
+      }
+    }
+
+    // Notify the other party
+    const io = req.app.get("io");
+    const otherId = isPatient ? request.helper : request.patient;
+    if (otherId) io.to(otherId.toString()).emit("requestUpdated", request);
+
+    res.json(request);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// --- NO-SHOW: either party reports the other didn't show ---
+app.patch("/api/requests/:id/no-show", auth, async (req, res) => {
+  try {
+    const { reason } = req.body;
+    // Only meaningful once accepted and before service actually started
+    const reportableStates = ["accepted", "on_the_way"];
+    const request = await Request.findById(req.params.id);
+    if (!request) return res.status(404).json({ error: "Request not found" });
+    if (!reportableStates.includes(request.status)) {
+      return res.status(409).json({ error: "No-show can only be reported before the service starts" });
+    }
+
+    const meId = req.user.id;
+    const isPatient = request.patient?.toString() === meId;
+    const isHelper = request.helper?.toString() === meId;
+    if (!isPatient && !isHelper) {
+      return res.status(403).json({ error: "You are not part of this request" });
+    }
+    const reporter = isPatient ? "patient" : "helper";
+
+    request.status = "no_show";
+    request.noShowReportedBy = reporter;
+    request.noShowReason = reason || null;
+    request.endedAt = new Date();
+    await request.save();
+
+    // Increment the REPORTED person's no-show counter (the other party)
+    if (isPatient) {
+      await HelperProfile.findOneAndUpdate({ user: request.helper }, { $inc: { noShowCount: 1 } });
+    } else {
+      await User.findByIdAndUpdate(request.patient, { $inc: { noShowCount: 1 } });
+    }
+
+    const io = req.app.get("io");
+    const otherId = isPatient ? request.helper : request.patient;
+    if (otherId) io.to(otherId.toString()).emit("requestUpdated", request);
+
+    res.json(request);
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
