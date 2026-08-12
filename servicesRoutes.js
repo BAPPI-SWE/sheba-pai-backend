@@ -26,10 +26,36 @@ module.exports = function servicesRoutes(app, deps) {
       const offerings = await HelperService.find({ helper: req.user.id, isActive: true });
       let eligibleCount = 0;
       let pendingCount = 0;
+      // Services that need the helper to DO something (upload a missing/new/rejected doc)
+      const actionNeeded = [];
+      // Services simply awaiting admin review (no helper action needed)
+      const awaitingReview = [];
+
       for (const o of offerings) {
         const elig = await checkEligibility(req.user.id, o.service, "helper");
-        if (elig.eligible) eligibleCount++;
-        else pendingCount++;
+        if (elig.eligible) {
+          eligibleCount++;
+          continue;
+        }
+        pendingCount++;
+        const service = await Service.findById(o.service).select("name nameBangla parent");
+        if (elig.missing && elig.missing.length > 0) {
+          // Helper must act — e.g. a NEW requirement was added, or one was rejected
+          actionNeeded.push({
+            serviceId: o.service,
+            serviceName: service?.name || "",
+            serviceNameBangla: service?.nameBangla || "",
+            missing: elig.missing.map((r) => ({
+              id: r._id, title: r.title, titleBangla: r.titleBangla,
+            })),
+          });
+        } else if (elig.pending && elig.pending.length > 0) {
+          awaitingReview.push({
+            serviceId: o.service,
+            serviceName: service?.name || "",
+            serviceNameBangla: service?.nameBangla || "",
+          });
+        }
       }
 
       // "live" = identity approved AND at least one fully-eligible service
@@ -42,6 +68,8 @@ module.exports = function servicesRoutes(app, deps) {
         pendingCount,
         isLive,
         hasProfession: !!profile?.profession,
+        actionNeeded,     // services where the helper must upload something
+        awaitingReview,   // services just waiting on admin
       });
     } catch (err) {
       res.status(400).json({ error: err.message });
