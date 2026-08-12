@@ -40,11 +40,20 @@ module.exports = function servicesRoutes(app, deps) {
         pendingCount++;
         const service = await Service.findById(o.service).select("name nameBangla parent");
         if (elig.missing && elig.missing.length > 0) {
-          // Helper must act — e.g. a NEW requirement was added, or one was rejected
+          // Helper must act — e.g. a NEW requirement was added, or one was rejected.
+          // Include the parent main-service too, so the app can jump straight to
+          // the requirements screen without redoing profession/service selection.
+          let mainInfo = null;
+          if (service?.parent) {
+            const main = await Service.findById(service.parent).select("name nameBangla");
+            if (main) mainInfo = { _id: main._id, name: main.name, nameBangla: main.nameBangla };
+          }
           actionNeeded.push({
             serviceId: o.service,
             serviceName: service?.name || "",
             serviceNameBangla: service?.nameBangla || "",
+            parent: service?.parent || null,
+            main: mainInfo,
             missing: elig.missing.map((r) => ({
               id: r._id, title: r.title, titleBangla: r.titleBangla,
             })),
