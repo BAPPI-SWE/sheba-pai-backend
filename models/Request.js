@@ -59,6 +59,12 @@ const requestSchema = new mongoose.Schema(
     noShowReportedBy: { type: String, enum: ["patient", "helper", null], default: null },
     noShowReason: { type: String, default: null },
     endedAt: { type: Date, default: null },
+
+    // Earnings & commission tracking
+    helpingStartedAt: { type: Date, default: null }, // when status -> "helping"
+    finalAmount: { type: Number, default: null },     // computed at completion
+    commissionAmount: { type: Number, default: null }, // platform's cut of finalAmount
+    commissionPercentApplied: { type: Number, default: null },
     location: {
       type: {
         type: String,

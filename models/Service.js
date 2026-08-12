@@ -51,6 +51,9 @@ const serviceSchema = new mongoose.Schema(
       default: "none",
     },
 
+    // Platform commission taken from the helper's earnings on this service.
+    commissionPercent: { type: Number, default: 0, min: 0, max: 100 },
+
     description: { type: String, default: null },
     isActive: { type: Boolean, default: true },
     sortOrder: { type: Number, default: 0 },

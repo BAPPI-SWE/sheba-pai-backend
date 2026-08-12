@@ -20,6 +20,8 @@ const HelperService = require("./models/HelperService");
 const servicesRoutes = require("./servicesRoutes");
 const ratingsRoutes = require("./ratingsRoutes");
 const browseRoutes = require("./browseRoutes");
+const commissionRoutes = require("./commissionRoutes");
+const { finalizeJobEarnings, isHelperRestricted } = require("./commissionRoutes");
 const { isHelperClearedForService } = require("./eligibility");
 const auth = require("./middleware/auth");
 
@@ -331,6 +333,12 @@ app.patch("/api/helper/location", auth, helperOnly, async (req, res) => {
       if (!profile || profile.verificationStatus !== "approved") {
         return res.status(403).json({ error: "আপনার অ্যাকাউন্ট এখনো যাচাই করা হয়নি" });
       }
+      if (await isHelperRestricted(req.user.id)) {
+        return res.status(403).json({
+          error: "Your account is restricted due to unpaid commission. Please pay to continue.",
+          restricted: true,
+        });
+      }
     }
     const profile = await HelperProfile.findOneAndUpdate(
       { user: req.user.id },
@@ -524,12 +532,23 @@ app.patch("/api/requests/:id/status", auth, helperOnly, async (req, res) => {
     const { nextStatus } = req.body;
     const validFrom = Object.keys(transitions).find((f) => transitions[f] === nextStatus);
     if (!validFrom) return res.status(400).json({ error: `Cannot transition to '${nextStatus}'` });
+
+    // Capture the moment service actually starts, for hourly-rate earnings.
+    const extraFields = {};
+    if (nextStatus === "helping") extraFields.helpingStartedAt = new Date();
+
     const updated = await Request.findOneAndUpdate(
       { _id: req.params.id, status: validFrom, helper: req.user.id },
-      { status: nextStatus },
+      { status: nextStatus, ...extraFields },
       { new: true }
     );
     if (!updated) return res.status(409).json({ error: `Request is not in '${validFrom}' state, or is not yours` });
+
+    // On completion, compute the final amount + commission owed.
+    if (nextStatus === "completed") {
+      await finalizeJobEarnings(updated);
+    }
+
     req.app.get("io").to(updated.patient.toString()).emit("requestUpdated", updated);
     res.json(updated);
   } catch (err) {
@@ -635,6 +654,9 @@ ratingsRoutes(app, { auth });
 
 // --- BROWSE-AND-CHOOSE: paginated nearby helpers, request specific helpers ---
 browseRoutes(app, { auth });
+
+// --- COMMISSION & EARNINGS: helper earnings, payments, admin review ---
+commissionRoutes(app, { auth, adminOnly, helperOnly });
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running at http://localhost:${PORT}`);

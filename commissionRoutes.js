@@ -1,0 +1,197 @@
+/**
+ * Commission & earnings system.
+ *   - Computes final job amount + commission at completion (hooked from index.js).
+ *   - Restriction check: a helper with overdue unpaid commission cannot go online.
+ *   - Helper: view earnings/balance, submit a bKash/Nagad/Rocket payment.
+ *   - Admin: set per-service commission %, set grace period, review payments.
+ *
+ * Wire into index.js:
+ *   const commissionRoutes = require("./commissionRoutes");
+ *   commissionRoutes(app, { auth, adminOnly, helperOnly });
+ *   const { finalizeJobEarnings, isHelperRestricted } = require("./commissionRoutes");
+ */
+const HelperProfile = require("./models/HelperProfile");
+const HelperService = require("./models/HelperService");
+const Service = require("./models/Service");
+const Request = require("./models/Request");
+const PaymentSubmission = require("./models/PaymentSubmission");
+const PlatformSettings = require("./models/PlatformSettings");
+
+async function getSettings() {
+  let s = await PlatformSettings.findOne({ key: "global" });
+  if (!s) s = await PlatformSettings.create({ key: "global" });
+  return s;
+}
+
+/**
+ * Called when a job transitions to "completed".
+ * Computes the final amount (hourly: duration × rate; fixed: the set price),
+ * the commission owed, updates the request, and adds to the helper's balance
+ * with a due date based on the grace period.
+ */
+async function finalizeJobEarnings(request) {
+  const offering = await HelperService.findOne({ helper: request.helper, service: request.subService });
+  const service = request.subService ? await Service.findById(request.subService) : null;
+  if (!offering || !service) return; // legacy/broadcast request with no priced sub-service — skip
+
+  let finalAmount = 0;
+  if (offering.chargeType === "hourly") {
+    const start = request.helpingStartedAt ? new Date(request.helpingStartedAt) : null;
+    const end = new Date();
+    const hours = start ? Math.max((end - start) / 3600000, 0) : 0;
+    finalAmount = Math.round(hours * offering.amount * 100) / 100;
+  } else {
+    finalAmount = offering.amount;
+  }
+
+  const percent = service.commissionPercent || 0;
+  const commissionAmount = Math.round(finalAmount * (percent / 100) * 100) / 100;
+
+  request.finalAmount = finalAmount;
+  request.commissionAmount = commissionAmount;
+  request.commissionPercentApplied = percent;
+  await request.save();
+
+  if (commissionAmount > 0) {
+    const settings = await getSettings();
+    const dueDate = new Date(Date.now() + settings.commissionGraceDays * 86400000);
+    const profile = await HelperProfile.findOne({ user: request.helper });
+    if (profile) {
+      profile.totalEarned = (profile.totalEarned || 0) + finalAmount;
+      profile.commissionBalance = (profile.commissionBalance || 0) + commissionAmount;
+      // Track the OLDEST unpaid due date — restriction triggers off this.
+      // Only set it if there isn't already an earlier one in effect, so a
+      // helper who keeps working while owing money doesn't get their
+      // deadline pushed back by every new job.
+      if (!profile.oldestUnpaidDueDate) {
+        profile.oldestUnpaidDueDate = dueDate;
+      }
+      await profile.save();
+    }
+  }
+}
+
+/** Lazily computed: true if the helper has overdue unpaid commission. */
+async function isHelperRestricted(userId) {
+  const profile = await HelperProfile.findOne({ user: userId });
+  if (!profile) return false;
+  if (profile.commissionBalance <= 0) return false;
+  if (!profile.oldestUnpaidDueDate) return false;
+  return new Date() > new Date(profile.oldestUnpaidDueDate);
+}
+
+module.exports = function commissionRoutes(app, deps) {
+  const { auth, adminOnly, helperOnly } = deps;
+
+  // --- HELPER: view earnings + balance + restriction status ---
+  app.get("/api/helper/earnings", auth, helperOnly, async (req, res) => {
+    try {
+      const profile = await HelperProfile.findOne({ user: req.user.id });
+      const restricted = await isHelperRestricted(req.user.id);
+      const settings = await getSettings();
+      const pendingPayments = await PaymentSubmission.find({ helper: req.user.id, status: "pending" });
+      res.json({
+        totalEarned: profile?.totalEarned || 0,
+        commissionBalance: profile?.commissionBalance || 0,
+        dueDate: profile?.oldestUnpaidDueDate || null,
+        isRestricted: restricted,
+        graceDays: settings.commissionGraceDays,
+        pendingPaymentsTotal: pendingPayments.reduce((sum, p) => sum + p.amount, 0),
+      });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // --- HELPER: submit a bKash/Nagad/Rocket payment ---
+  app.post("/api/helper/payments", auth, helperOnly, async (req, res) => {
+    try {
+      const { method, senderPhone, transactionId, amount } = req.body;
+      if (!["bkash", "nagad", "rocket"].includes(method)) return res.status(400).json({ error: "Invalid payment method" });
+      if (!senderPhone || !transactionId) return res.status(400).json({ error: "Phone and transaction ID required" });
+      if (!amount || amount <= 0) return res.status(400).json({ error: "Enter a valid amount" });
+
+      const submission = await PaymentSubmission.create({
+        helper: req.user.id, method, senderPhone: senderPhone.trim(),
+        transactionId: transactionId.trim(), amount,
+      });
+      res.status(201).json(submission);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // --- HELPER: my payment history ---
+  app.get("/api/helper/payments", auth, helperOnly, async (req, res) => {
+    try {
+      const payments = await PaymentSubmission.find({ helper: req.user.id }).sort({ createdAt: -1 });
+      res.json(payments);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // --- ADMIN: platform settings (grace period) ---
+  app.get("/api/admin/settings", auth, adminOnly, async (req, res) => {
+    try { res.json(await getSettings()); } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+  app.patch("/api/admin/settings", auth, adminOnly, async (req, res) => {
+    try {
+      const { commissionGraceDays } = req.body;
+      const settings = await getSettings();
+      if (commissionGraceDays) settings.commissionGraceDays = Number(commissionGraceDays);
+      await settings.save();
+      res.json(settings);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // --- ADMIN: list payment submissions (default: pending) ---
+  app.get("/api/admin/payments", auth, adminOnly, async (req, res) => {
+    try {
+      const status = req.query.status || "pending";
+      const payments = await PaymentSubmission.find({ status }).sort({ createdAt: -1 }).populate("helper", "name phone");
+      res.json(payments);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  // --- ADMIN: approve/reject a payment submission ---
+  app.patch("/api/admin/payments/:id", auth, adminOnly, async (req, res) => {
+    try {
+      const { decision, rejectionReason } = req.body; // "approve" | "reject"
+      const submission = await PaymentSubmission.findById(req.params.id);
+      if (!submission) return res.status(404).json({ error: "Not found" });
+      if (submission.status !== "pending") return res.status(409).json({ error: "Already reviewed" });
+
+      submission.status = decision === "approve" ? "approved" : "rejected";
+      submission.rejectionReason = decision === "approve" ? null : (rejectionReason || null);
+      submission.reviewedBy = req.user.id;
+      submission.reviewedAt = new Date();
+      await submission.save();
+
+      if (decision === "approve") {
+        const profile = await HelperProfile.findOne({ user: submission.helper });
+        if (profile) {
+          profile.commissionBalance = Math.max(0, (profile.commissionBalance || 0) - submission.amount);
+          if (profile.commissionBalance <= 0) {
+            profile.commissionBalance = 0;
+            profile.oldestUnpaidDueDate = null; // fully cleared
+          }
+          // Note: if partially paid, oldestUnpaidDueDate intentionally stays as-is
+          // (the remaining balance is still tied to the original due date).
+          await profile.save();
+        }
+      }
+
+      res.json(submission);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+};
+
+module.exports.finalizeJobEarnings = finalizeJobEarnings;
+module.exports.isHelperRestricted = isHelperRestricted;

@@ -19,6 +19,12 @@ const helperProfileSchema = new mongoose.Schema(
     cancelCount: { type: Number, default: 0 },
     noShowCount: { type: Number, default: 0 },
 
+    // Commission / earnings tracking
+    totalEarned: { type: Number, default: 0 },          // lifetime gross earnings
+    commissionBalance: { type: Number, default: 0 },    // currently owed to platform
+    oldestUnpaidDueDate: { type: Date, default: null },  // earliest unpaid commission's due date
+    isRestricted: { type: Boolean, default: false },     // manually/derived: blocked from going online
+
     isAvailable: { type: Boolean, default: false },
     location: {
       type: { type: String, enum: ["Point"], default: "Point" },
