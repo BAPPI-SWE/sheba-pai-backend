@@ -382,6 +382,25 @@ app.get("/api/requests/active", auth, async (req, res) => {
   }
 });
 
+// Patient booking history — active + past requests, newest first.
+app.get("/api/requests/history", auth, async (req, res) => {
+  try {
+    const requests = await Request.find({ patient: req.user.id })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .populate("helper", "name phone")
+      .lean();
+
+    const activeStates = ["searching", "accepted", "on_the_way", "helping"];
+    const active = requests.filter((r) => activeStates.includes(r.status));
+    const past = requests.filter((r) => !activeStates.includes(r.status));
+
+    res.json({ active, past });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.post("/api/requests", auth, async (req, res) => {
   try {
     const { role, roles, serviceName, longitude, latitude } = req.body;
