@@ -152,6 +152,52 @@ app.get("/api/me", auth, async (req, res) => {
   }
 });
 
+// Update the current user's own name.
+app.patch("/api/me", auth, async (req, res) => {
+  try {
+    const { name } = req.body;
+    if (!name || !name.trim()) return res.status(400).json({ error: "Name cannot be empty" });
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { name: name.trim() },
+      { new: true }
+    ).select("-password");
+    res.json(user);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Add a saved address.
+app.post("/api/me/addresses", auth, async (req, res) => {
+  try {
+    const { label, address, longitude, latitude } = req.body;
+    if (!label || !label.trim()) return res.status(400).json({ error: "Label required" });
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { $push: { savedAddresses: { label: label.trim(), address: address || "", longitude: longitude ?? null, latitude: latitude ?? null } } },
+      { new: true }
+    ).select("-password");
+    res.status(201).json(user.savedAddresses);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Delete a saved address by its subdocument id.
+app.delete("/api/me/addresses/:addrId", auth, async (req, res) => {
+  try {
+    const user = await User.findByIdAndUpdate(
+      req.user.id,
+      { $pull: { savedAddresses: { _id: req.params.addrId } } },
+      { new: true }
+    ).select("-password");
+    res.json(user.savedAddresses);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 // --- HELPER PROFILE ---
 app.post("/api/helper/profile", auth, helperOnly, async (req, res) => {
   try {

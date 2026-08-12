@@ -19,6 +19,16 @@ const userSchema = new mongoose.Schema(
     // Accountability counters (admin reviews patterns)
     cancelCount: { type: Number, default: 0 },
     noShowCount: { type: Number, default: 0 },
+
+    // Saved addresses (patient convenience: Home, Hospital, etc.)
+    savedAddresses: [
+      {
+        label: { type: String, required: true },      // "Home", "Hospital"...
+        address: { type: String, default: "" },        // human-readable text
+        longitude: { type: Number, default: null },
+        latitude: { type: Number, default: null },
+      },
+    ],
   },
   { timestamps: true }
 );
