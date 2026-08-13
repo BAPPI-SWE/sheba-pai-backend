@@ -21,6 +21,7 @@ const servicesRoutes = require("./servicesRoutes");
 const ratingsRoutes = require("./ratingsRoutes");
 const browseRoutes = require("./browseRoutes");
 const commissionRoutes = require("./commissionRoutes");
+const reportsRoutes = require("./reportsRoutes");
 const { finalizeJobEarnings, isHelperRestricted } = require("./commissionRoutes");
 const { isHelperClearedForService } = require("./eligibility");
 const auth = require("./middleware/auth");
@@ -657,6 +658,9 @@ browseRoutes(app, { auth });
 
 // --- COMMISSION & EARNINGS: helper earnings, payments, admin review ---
 commissionRoutes(app, { auth, adminOnly, helperOnly });
+
+// --- REPORTS: admin accountability + commission overview ---
+reportsRoutes(app, { auth, adminOnly });
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running at http://localhost:${PORT}`);
