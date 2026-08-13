@@ -59,11 +59,11 @@ async function finalizeJobEarnings(request) {
     if (profile) {
       profile.totalEarned = (profile.totalEarned || 0) + finalAmount;
       profile.commissionBalance = (profile.commissionBalance || 0) + commissionAmount;
-      // Track the OLDEST unpaid due date — restriction triggers off this.
-      // Only set it if there isn't already an earlier one in effect, so a
-      // helper who keeps working while owing money doesn't get their
-      // deadline pushed back by every new job.
-      if (!profile.oldestUnpaidDueDate) {
+      // Only start a payment clock once the balance actually goes POSITIVE —
+      // a helper who's in credit should have that credit absorb new
+      // commission first, without a due date appearing while they still
+      // owe nothing.
+      if (profile.commissionBalance > 0 && !profile.oldestUnpaidDueDate) {
         profile.oldestUnpaidDueDate = dueDate;
       }
       await profile.save();
@@ -175,10 +175,12 @@ module.exports = function commissionRoutes(app, deps) {
       if (decision === "approve") {
         const profile = await HelperProfile.findOne({ user: submission.helper });
         if (profile) {
-          profile.commissionBalance = Math.max(0, (profile.commissionBalance || 0) - submission.amount);
+          profile.commissionBalance = (profile.commissionBalance || 0) - submission.amount;
+          // Overpaying is allowed on purpose: the excess becomes CREDIT
+          // (a negative balance) that automatically offsets the helper's
+          // next commission, instead of being clamped away and lost.
           if (profile.commissionBalance <= 0) {
-            profile.commissionBalance = 0;
-            profile.oldestUnpaidDueDate = null; // fully cleared
+            profile.oldestUnpaidDueDate = null; // nothing currently owed — paid up or in credit
           }
           // Note: if partially paid, oldestUnpaidDueDate intentionally stays as-is
           // (the remaining balance is still tied to the original due date).
