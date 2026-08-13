@@ -8,6 +8,8 @@
  */
 const User = require("./models/User");
 const HelperProfile = require("./models/HelperProfile");
+const Request = require("./models/Request");
+const PaymentSubmission = require("./models/PaymentSubmission");
 
 module.exports = function reportsRoutes(app, deps) {
   const { auth, adminOnly } = deps;
@@ -72,14 +74,31 @@ module.exports = function reportsRoutes(app, deps) {
       owing.sort((a, b) => b.commissionBalance - a.commissionBalance);
 
       const totalOutstanding = owing.reduce((sum, o) => sum + o.commissionBalance, 0);
+
+      // Caregivers' gross earnings (what THEY made — not platform revenue)
       const totalEarnedAll = await HelperProfile.aggregate([
         { $group: { _id: null, total: { $sum: "$totalEarned" } } },
       ]);
+
+      // Platform's commission revenue — the actual number the person asked for.
+      // "Generated" = commission owed across every completed job ever, regardless of payment.
+      const commissionGenerated = await Request.aggregate([
+        { $match: { commissionAmount: { $ne: null } } },
+        { $group: { _id: null, total: { $sum: "$commissionAmount" } } },
+      ]);
+      // "Collected" = commission actually received (admin-approved MFS payments).
+      const commissionCollected = await PaymentSubmission.aggregate([
+        { $match: { status: "approved" } },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ]);
+
       const restrictedCount = owing.filter((o) => o.overdue).length;
 
       res.json({
         totalOutstanding,
         totalEarnedAll: totalEarnedAll[0]?.total || 0,
+        commissionGenerated: commissionGenerated[0]?.total || 0,
+        commissionCollected: commissionCollected[0]?.total || 0,
         restrictedCount,
         owing,
       });
