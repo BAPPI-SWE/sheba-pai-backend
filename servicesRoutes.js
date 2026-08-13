@@ -11,10 +11,100 @@ const Requirement = require("./models/Requirement");
 const RequirementSubmission = require("./models/RequirementSubmission");
 const HelperService = require("./models/HelperService");
 const HelperProfile = require("./models/HelperProfile");
+const User = require("./models/User");
 const { checkEligibility, getRequirementsWithStatus } = require("./eligibility");
 
 module.exports = function servicesRoutes(app, deps) {
   const { auth, adminOnly, helperOnly, upload, uploadToCloudinary } = deps;
+
+  /**
+   * Full caregiver profile in one call: identity info, profession,
+   * and every service they offer with its price + live eligibility status.
+   * Powers the profile screen (view/edit), replacing the onboarding wizard
+   * as the way an existing caregiver manages their services.
+   */
+  app.get("/api/helper/full-profile", auth, helperOnly, async (req, res) => {
+    try {
+      const profile = await HelperProfile.findOne({ user: req.user.id });
+      const user = await User.findById(req.user.id).select("name phone ratingAvg ratingCount");
+      const offerings = await HelperService.find({ helper: req.user.id }).lean();
+
+      const services = [];
+      for (const o of offerings) {
+        const service = await Service.findById(o.service).select("name nameBangla parent chargeType pricingMode adminAmount");
+        if (!service) continue;
+        let main = null;
+        if (service.parent) {
+          main = await Service.findById(service.parent).select("name nameBangla");
+        }
+        const elig = await checkEligibility(req.user.id, o.service, "helper");
+        services.push({
+          offeringId: o._id,
+          serviceId: o.service,
+          name: service.name,
+          nameBangla: service.nameBangla,
+          mainName: main?.name || null,
+          mainNameBangla: main?.nameBangla || null,
+          chargeType: o.chargeType,
+          amount: o.amount,
+          yearsExperience: o.yearsExperience,
+          isActive: o.isActive,
+          pricingMode: service.pricingMode,
+          adminAmount: service.adminAmount,
+          eligible: elig.eligible,
+          missingCount: (elig.missing || []).length,
+          pendingCount: (elig.pending || []).length,
+        });
+      }
+
+      res.json({
+        name: user?.name,
+        phone: user?.phone,
+        ratingAvg: user?.ratingAvg || profile?.ratingAvg || 0,
+        ratingCount: profile?.ratingCount || 0,
+        profession: profile?.profession || null,
+        identityStatus: profile?.verificationStatus || "unsubmitted",
+        fullName: profile?.fullName || null,
+        services,
+      });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  /** Update the price / experience on ONE existing service offering. */
+  app.patch("/api/helper/services/:offeringId", auth, helperOnly, async (req, res) => {
+    try {
+      const { amount, yearsExperience, isActive } = req.body;
+      const offering = await HelperService.findOne({ _id: req.params.offeringId, helper: req.user.id });
+      if (!offering) return res.status(404).json({ error: "Service not found" });
+
+      // Respect admin-locked pricing
+      const service = await Service.findById(offering.service);
+      if (service?.pricingMode === "admin_fixed" && amount !== undefined) {
+        return res.status(403).json({ error: "This price is fixed by the platform" });
+      }
+
+      if (amount !== undefined) offering.amount = Number(amount) || 0;
+      if (yearsExperience !== undefined) offering.yearsExperience = Number(yearsExperience) || 0;
+      if (isActive !== undefined) offering.isActive = !!isActive;
+      await offering.save();
+      res.json(offering);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  /** Remove a service the caregiver no longer wants to offer. */
+  app.delete("/api/helper/services/:offeringId", auth, helperOnly, async (req, res) => {
+    try {
+      const deleted = await HelperService.findOneAndDelete({ _id: req.params.offeringId, helper: req.user.id });
+      if (!deleted) return res.status(404).json({ error: "Service not found" });
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
 
   // Overall helper readiness: identity status + whether they have any
   // APPROVED (eligible) service offering. Drives app routing after login.
