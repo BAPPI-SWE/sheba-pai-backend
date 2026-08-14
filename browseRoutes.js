@@ -13,6 +13,7 @@ const Request = require("./models/Request");
 const User = require("./models/User");
 const { isHelperClearedForService, isPatientClearedForService } = require("./eligibility");
 const { getSettings } = require("./commissionRoutes");
+const { sendPush } = require("./pushService");
 
 // Haversine distance in km between two [lng,lat] points
 function distanceKm(lng1, lat1, lng2, lat2) {
@@ -168,6 +169,14 @@ module.exports = function browseRoutes(app, deps) {
       // Notify only the chosen helpers
       const io = req.app.get("io");
       helperIds.forEach((hid) => io.to(hid.toString()).emit("newRequest", saved));
+
+      // Push so caregivers hear about it even with the app closed —
+      // this is what makes the platform actually usable in the field.
+      sendPush(helperIds, {
+        title: "নতুন কাজের অনুরোধ",
+        body: `${serviceName || "Service"} — একজন রোগী আপনাকে অনুরোধ পাঠিয়েছেন`,
+        data: { type: "new_request", requestId: String(saved._id) },
+      });
 
       res.status(201).json({ request: saved, targeted: helperIds.length });
     } catch (err) {

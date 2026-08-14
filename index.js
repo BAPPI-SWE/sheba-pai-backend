@@ -22,6 +22,7 @@ const ratingsRoutes = require("./ratingsRoutes");
 const browseRoutes = require("./browseRoutes");
 const commissionRoutes = require("./commissionRoutes");
 const reportsRoutes = require("./reportsRoutes");
+const { sendPush } = require("./pushService");
 const { finalizeJobEarnings, isHelperRestricted, getSettings } = require("./commissionRoutes");
 const { isHelperClearedForService } = require("./eligibility");
 const auth = require("./middleware/auth");
@@ -150,6 +151,17 @@ app.post("/api/auth/login", async (req, res) => {
 app.get("/api/me", auth, async (req, res) => {
   try {
     res.json(await User.findById(req.user.id).select("-password"));
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Save or clear this user's Expo push token.
+app.patch("/api/me/push-token", auth, async (req, res) => {
+  try {
+    const { pushToken } = req.body;
+    await User.findByIdAndUpdate(req.user.id, { pushToken: pushToken || null });
+    res.json({ ok: true });
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
@@ -536,6 +548,11 @@ app.patch("/api/requests/:id/accept", auth, helperOnly, async (req, res) => {
     ).populate("helper", "name phone");
     if (!updated) return res.status(409).json({ error: "This request was already taken or does not exist" });
     req.app.get("io").to(updated.patient.toString()).emit("requestAccepted", updated);
+    sendPush(updated.patient, {
+      title: "সাহায্যকারী পাওয়া গেছে",
+      body: `${updated.helper?.name || "একজন সাহায্যকারী"} আপনার অনুরোধ গ্রহণ করেছেন`,
+      data: { type: "accepted", requestId: String(updated._id) },
+    });
     res.json(updated);
   } catch (err) {
     res.status(400).json({ error: err.message });
@@ -566,6 +583,20 @@ app.patch("/api/requests/:id/status", auth, helperOnly, async (req, res) => {
     }
 
     req.app.get("io").to(updated.patient.toString()).emit("requestUpdated", updated);
+
+    const statusMessages = {
+      on_the_way: "আপনার সাহায্যকারী রওনা দিয়েছেন",
+      helping: "সেবা শুরু হয়েছে",
+      completed: "সেবা সম্পন্ন হয়েছে",
+    };
+    if (statusMessages[nextStatus]) {
+      sendPush(updated.patient, {
+        title: "সেবা পাই",
+        body: statusMessages[nextStatus],
+        data: { type: "status", status: nextStatus, requestId: String(updated._id) },
+      });
+    }
+
     res.json(updated);
   } catch (err) {
     res.status(400).json({ error: err.message });

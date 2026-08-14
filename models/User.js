@@ -20,6 +20,9 @@ const userSchema = new mongoose.Schema(
     cancelCount: { type: Number, default: 0 },
     noShowCount: { type: Number, default: 0 },
 
+    // Expo push token for this user's device (null when logged out)
+    pushToken: { type: String, default: null },
+
     // Saved addresses (patient convenience: Home, Hospital, etc.)
     savedAddresses: [
       {
