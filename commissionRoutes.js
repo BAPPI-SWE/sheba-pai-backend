@@ -137,9 +137,23 @@ module.exports = function commissionRoutes(app, deps) {
   });
   app.patch("/api/admin/settings", auth, adminOnly, async (req, res) => {
     try {
-      const { commissionGraceDays } = req.body;
+      const { commissionGraceDays, maxConcurrentJobs, searchRadiusKm, browsePageSize } = req.body;
       const settings = await getSettings();
-      if (commissionGraceDays) settings.commissionGraceDays = Number(commissionGraceDays);
+
+      // Each is clamped to a sane range so a typo can't break the platform.
+      if (commissionGraceDays !== undefined) {
+        settings.commissionGraceDays = Math.max(1, Number(commissionGraceDays) || 3);
+      }
+      if (maxConcurrentJobs !== undefined) {
+        settings.maxConcurrentJobs = Math.min(20, Math.max(1, Number(maxConcurrentJobs) || 3));
+      }
+      if (searchRadiusKm !== undefined) {
+        settings.searchRadiusKm = Math.min(100, Math.max(1, Number(searchRadiusKm) || 20));
+      }
+      if (browsePageSize !== undefined) {
+        settings.browsePageSize = Math.min(50, Math.max(3, Number(browsePageSize) || 10));
+      }
+
       await settings.save();
       res.json(settings);
     } catch (err) {
@@ -195,5 +209,6 @@ module.exports = function commissionRoutes(app, deps) {
   });
 };
 
+module.exports.getSettings = getSettings;
 module.exports.finalizeJobEarnings = finalizeJobEarnings;
 module.exports.isHelperRestricted = isHelperRestricted;

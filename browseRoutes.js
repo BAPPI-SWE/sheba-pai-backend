@@ -12,6 +12,7 @@ const Service = require("./models/Service");
 const Request = require("./models/Request");
 const User = require("./models/User");
 const { isHelperClearedForService, isPatientClearedForService } = require("./eligibility");
+const { getSettings } = require("./commissionRoutes");
 
 // Haversine distance in km between two [lng,lat] points
 function distanceKm(lng1, lat1, lng2, lat2) {
@@ -54,7 +55,8 @@ module.exports = function browseRoutes(app, deps) {
       const longitude = parseFloat(req.query.longitude);
       const latitude = parseFloat(req.query.latitude);
       const skip = parseInt(req.query.skip) || 0;
-      const limit = parseInt(req.query.limit) || 10;
+      const settings = await getSettings();
+      const limit = parseInt(req.query.limit) || settings.browsePageSize;
 
       if (!subServiceId || isNaN(longitude) || isNaN(latitude)) {
         return res.status(400).json({ error: "subServiceId, longitude, latitude required" });
@@ -79,7 +81,7 @@ module.exports = function browseRoutes(app, deps) {
         location: {
           $near: {
             $geometry: { type: "Point", coordinates: [longitude, latitude] },
-            $maxDistance: 20000, // 20km ceiling
+            $maxDistance: settings.searchRadiusKm * 1000, // admin-configured radius
           },
         },
       })

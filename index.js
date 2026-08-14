@@ -22,7 +22,7 @@ const ratingsRoutes = require("./ratingsRoutes");
 const browseRoutes = require("./browseRoutes");
 const commissionRoutes = require("./commissionRoutes");
 const reportsRoutes = require("./reportsRoutes");
-const { finalizeJobEarnings, isHelperRestricted } = require("./commissionRoutes");
+const { finalizeJobEarnings, isHelperRestricted, getSettings } = require("./commissionRoutes");
 const { isHelperClearedForService } = require("./eligibility");
 const auth = require("./middleware/auth");
 
@@ -512,6 +512,21 @@ app.patch("/api/requests/:id/accept", auth, helperOnly, async (req, res) => {
       if (!profile || profile.verificationStatus !== "approved") {
         return res.status(403).json({ error: "Your account is not verified yet" });
       }
+    }
+
+    // Concurrency gate: how many jobs may one caregiver hold at once?
+    // Set platform-wide by admin in Settings.
+    const settings = await getSettings();
+    const activeCount = await Request.countDocuments({
+      helper: req.user.id,
+      status: { $in: ["accepted", "on_the_way", "helping"] },
+    });
+    if (activeCount >= settings.maxConcurrentJobs) {
+      return res.status(409).json({
+        error: `You can only handle ${settings.maxConcurrentJobs} job(s) at a time. Finish one before accepting another.`,
+        atJobLimit: true,
+        limit: settings.maxConcurrentJobs,
+      });
     }
 
     const updated = await Request.findOneAndUpdate(
