@@ -25,6 +25,8 @@ async function sendPush(userIds, message) {
       pushToken: { $ne: null },
     }).select("pushToken");
 
+    console.log(`[push] targets=${ids.length} withToken=${users.length} "${message.title}"`);
+
     const messages = users
       .filter((u) => u.pushToken)
       .map((u) => ({
@@ -37,12 +39,15 @@ async function sendPush(userIds, message) {
         data: message.data || {},
       }));
 
-    if (messages.length === 0) return;
+    if (messages.length === 0) {
+      console.log("[push] SKIPPED — no saved push tokens for these users");
+      return;
+    }
 
     // Expo accepts up to 100 messages per request
     for (let i = 0; i < messages.length; i += 100) {
       const chunk = messages.slice(i, i + 100);
-      await fetch(EXPO_PUSH_URL, {
+      const resp = await fetch(EXPO_PUSH_URL, {
         method: "POST",
         headers: {
           Accept: "application/json",
@@ -50,6 +55,10 @@ async function sendPush(userIds, message) {
         },
         body: JSON.stringify(chunk),
       });
+      // Expo reports per-message errors in the response body — log them,
+      // otherwise failures are completely invisible.
+      const result = await resp.json().catch(() => null);
+      console.log("[push] expo response:", JSON.stringify(result));
     }
   } catch (err) {
     console.error("Push send failed:", err.message);
