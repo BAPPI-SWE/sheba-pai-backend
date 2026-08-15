@@ -53,6 +53,14 @@ const requestSchema = new mongoose.Schema(
       ],
       default: "searching",
     },
+    // Human-readable location, captured at request time.
+    // "address" is precise (street-level) — only shown to the helper
+    // AFTER they accept. "roughArea" is coarse (neighborhood/city) —
+    // shown before accept, so a caregiver can judge the job without
+    // seeing the patient's exact address until they commit.
+    address: { type: String, default: null },
+    roughArea: { type: String, default: null },
+
     // Cancellation / no-show accountability
     cancelledBy: { type: String, enum: ["patient", "helper", null], default: null },
     cancelReason: { type: String, default: null },

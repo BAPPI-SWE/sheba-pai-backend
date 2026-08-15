@@ -133,7 +133,7 @@ module.exports = function browseRoutes(app, deps) {
    */
   app.post("/api/browse/request", auth, async (req, res) => {
     try {
-      const { subServiceId, serviceName, roles, longitude, latitude, helperIds } = req.body;
+      const { subServiceId, serviceName, roles, longitude, latitude, helperIds, address, roughArea } = req.body;
       if (!Array.isArray(helperIds) || helperIds.length === 0) {
         return res.status(400).json({ error: "Pick at least one helper" });
       }
@@ -163,6 +163,8 @@ module.exports = function browseRoutes(app, deps) {
         subService: subServiceId,
         location: { type: "Point", coordinates: [longitude, latitude] },
         targetedHelpers: helperIds,
+        address: address || null,
+        roughArea: roughArea || null,
       });
       const saved = await request.save();
 

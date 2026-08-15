@@ -413,6 +413,14 @@ app.get("/api/helper/requests", auth, helperOnly, async (req, res) => {
         Math.sin(dLat / 2) ** 2 +
         Math.cos((hLat * Math.PI) / 180) * Math.cos((pLat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
       obj.distanceKm = Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 10) / 10;
+
+      // PRIVACY: before the caregiver accepts, they see only the distance
+      // and a rough area (neighborhood/city) — never the exact coordinates
+      // or full address. Those are revealed only once they've committed to
+      // the job (via the accept response and the active-jobs endpoint).
+      delete obj.location;
+      delete obj.address;
+
       visible.push(obj);
     }
     res.json(visible);
