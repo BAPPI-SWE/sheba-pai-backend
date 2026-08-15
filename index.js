@@ -421,6 +421,21 @@ app.get("/api/helper/requests", auth, helperOnly, async (req, res) => {
       delete obj.location;
       delete obj.address;
 
+      // EARNINGS TRANSPARENCY: show what this job actually pays, before
+      // the caregiver commits — their own rate for this service, the
+      // platform's commission on it, and what they'd net. Real numbers,
+      // not something they have to work out themselves.
+      if (r.subService) {
+        const offering = await HelperService.findOne({ helper: req.user.id, service: r.subService });
+        const svc = await Service.findById(r.subService).select("commissionPercent");
+        if (offering && svc) {
+          const commissionPercent = svc.commissionPercent || 0;
+          const grossRate = offering.amount;
+          const netRate = Math.round(grossRate * (1 - commissionPercent / 100) * 100) / 100;
+          obj.pricing = { chargeType: offering.chargeType, grossRate, commissionPercent, netRate };
+        }
+      }
+
       visible.push(obj);
     }
     res.json(visible);

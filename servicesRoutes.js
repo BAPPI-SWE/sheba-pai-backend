@@ -31,13 +31,14 @@ module.exports = function servicesRoutes(app, deps) {
 
       const services = [];
       for (const o of offerings) {
-        const service = await Service.findById(o.service).select("name nameBangla parent chargeType pricingMode adminAmount");
+        const service = await Service.findById(o.service).select("name nameBangla parent chargeType pricingMode adminAmount commissionPercent");
         if (!service) continue;
         let main = null;
         if (service.parent) {
           main = await Service.findById(service.parent).select("name nameBangla");
         }
         const elig = await checkEligibility(req.user.id, o.service, "helper");
+        const commissionPercent = service.commissionPercent || 0;
         services.push({
           offeringId: o._id,
           serviceId: o.service,
@@ -51,6 +52,8 @@ module.exports = function servicesRoutes(app, deps) {
           isActive: o.isActive,
           pricingMode: service.pricingMode,
           adminAmount: service.adminAmount,
+          commissionPercent,
+          netAmount: Math.round(o.amount * (1 - commissionPercent / 100) * 100) / 100,
           eligible: elig.eligible,
           missingCount: (elig.missing || []).length,
           pendingCount: (elig.pending || []).length,

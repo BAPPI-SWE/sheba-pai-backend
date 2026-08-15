@@ -121,6 +121,37 @@ module.exports = function commissionRoutes(app, deps) {
     }
   });
 
+  // --- HELPER: per-job earnings statement (the auditable breakdown) ---
+  app.get("/api/helper/earnings-history", auth, helperOnly, async (req, res) => {
+    try {
+      const jobs = await Request.find({
+        helper: req.user.id,
+        status: "completed",
+        finalAmount: { $ne: null },
+      })
+        .sort({ endedAt: -1 })
+        .limit(50)
+        .populate("patient", "name")
+        .select("serviceName finalAmount commissionAmount commissionPercentApplied endedAt patient chargeType")
+        .lean();
+
+      const history = jobs.map((j) => ({
+        id: j._id,
+        serviceName: j.serviceName,
+        patientName: j.patient?.name || null,
+        date: j.endedAt,
+        gross: j.finalAmount,
+        commissionPercent: j.commissionPercentApplied || 0,
+        commission: j.commissionAmount || 0,
+        net: Math.round((j.finalAmount - (j.commissionAmount || 0)) * 100) / 100,
+      }));
+
+      res.json(history);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
   // --- HELPER: my payment history ---
   app.get("/api/helper/payments", auth, helperOnly, async (req, res) => {
     try {
