@@ -391,13 +391,29 @@ app.get("/api/helper/requests", auth, helperOnly, async (req, res) => {
     // (Identity is checked inside isHelperClearedForService too.)
     const visible = [];
     for (const r of requests) {
+      let allowed = false;
       if (r.subService) {
         const clearance = await isHelperClearedForService(req.user.id, r.subService);
-        if (clearance.cleared) visible.push(r);
+        allowed = clearance.cleared;
       } else {
         // Legacy/broadcast request: require approved identity at minimum
-        if (profile.verificationStatus === "approved") visible.push(r);
+        allowed = profile.verificationStatus === "approved";
       }
+      if (!allowed) continue;
+
+      // Attach how far this job is from the caregiver, so they can make an
+      // informed decision instead of accepting blind.
+      const obj = r.toObject();
+      const [hLng, hLat] = profile.location.coordinates;
+      const [pLng, pLat] = r.location.coordinates;
+      const R = 6371;
+      const dLat = ((pLat - hLat) * Math.PI) / 180;
+      const dLng = ((pLng - hLng) * Math.PI) / 180;
+      const a =
+        Math.sin(dLat / 2) ** 2 +
+        Math.cos((hLat * Math.PI) / 180) * Math.cos((pLat * Math.PI) / 180) * Math.sin(dLng / 2) ** 2;
+      obj.distanceKm = Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)) * 10) / 10;
+      visible.push(obj);
     }
     res.json(visible);
   } catch (err) {
