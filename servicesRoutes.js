@@ -471,11 +471,12 @@ module.exports = function servicesRoutes(app, deps) {
         return res.status(400).json({ error: "decision must be approve or reject" });
       }
       const update = decision === "approve"
-        ? { status: "approved", rejectionReason: null, reviewedAt: new Date() }
+        ? { status: "approved", rejectionReason: null, reviewedAt: new Date(), reviewedBy: req.user.id }
         : {
             status: "rejected",
             rejectionReason: rejectionReason || "Not acceptable",
             reviewedAt: new Date(),
+            reviewedBy: req.user.id,
           };
       const updated = await RequirementSubmission.findByIdAndUpdate(req.params.id, update, { new: true })
         .populate("user", "name phone")

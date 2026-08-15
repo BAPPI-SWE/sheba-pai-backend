@@ -101,6 +101,49 @@ app.get("/api/roles", async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+// --- ADMIN ACCOUNT MANAGEMENT ---
+// Creating an admin is intentionally NOT possible through public signup.
+// Only an already-authenticated admin can create another one here.
+app.get("/api/admin/admins", auth, adminOnly, async (req, res) => {
+  try {
+    const admins = await User.find({ role: "admin" }).select("name phone createdAt").sort({ createdAt: 1 });
+    res.json(admins);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.post("/api/admin/admins", auth, adminOnly, async (req, res) => {
+  try {
+    const { name, phone, password } = req.body;
+    if (!name || !phone || !password) return res.status(400).json({ error: "Name, phone, and password are required" });
+    if (password.length < 6) return res.status(400).json({ error: "Password must be at least 6 characters" });
+    const existing = await User.findOne({ phone });
+    if (existing) return res.status(409).json({ error: "Phone already registered" });
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const saved = await new User({ name, phone, password: hashedPassword, role: "admin" }).save();
+    res.status(201).json({ id: saved._id, name: saved.name, phone: saved.phone });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Remove an admin's access. An admin can never delete themselves this way
+// (avoids accidentally locking everyone out).
+app.delete("/api/admin/admins/:id", auth, adminOnly, async (req, res) => {
+  try {
+    if (req.params.id === req.user.id) {
+      return res.status(400).json({ error: "You cannot remove your own admin access" });
+    }
+    const target = await User.findById(req.params.id);
+    if (!target || target.role !== "admin") return res.status(404).json({ error: "Admin not found" });
+    await User.findByIdAndDelete(req.params.id);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
 app.post("/api/roles", auth, adminOnly, async (req, res) => {
   try {
     const { name, nameBangla } = req.body;
@@ -124,6 +167,13 @@ app.delete("/api/roles/:id", auth, adminOnly, async (req, res) => {
 app.post("/api/auth/signup", async (req, res) => {
   try {
     const { name, phone, password, role } = req.body;
+    // SECURITY: public signup may only ever create a patient or helper.
+    // "admin" must never be settable from an unauthenticated request —
+    // admin accounts are created exclusively through the protected
+    // /api/admin/admins endpoint by an already-logged-in admin.
+    if (!["patient", "helper"].includes(role)) {
+      return res.status(400).json({ error: "Invalid role" });
+    }
     const existing = await User.findOne({ phone });
     if (existing) return res.status(409).json({ error: "Phone already registered" });
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -327,8 +377,8 @@ app.patch("/api/admin/verifications/:id", auth, adminOnly, async (req, res) => {
       return res.status(400).json({ error: "decision must be approve or reject" });
     }
     const update = decision === "approve"
-      ? { verificationStatus: "approved", rejectionReason: null, reviewedAt: new Date() }
-      : { verificationStatus: "rejected", rejectionReason: rejectionReason || "Documents not acceptable", reviewedAt: new Date() };
+      ? { verificationStatus: "approved", rejectionReason: null, reviewedAt: new Date(), reviewedBy: req.user.id }
+      : { verificationStatus: "rejected", rejectionReason: rejectionReason || "Documents not acceptable", reviewedAt: new Date(), reviewedBy: req.user.id };
     const profile = await HelperProfile.findByIdAndUpdate(req.params.id, update, { new: true })
       .populate("user", "name phone");
     if (!profile) return res.status(404).json({ error: "Profile not found" });

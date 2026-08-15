@@ -38,6 +38,7 @@ const requirementSubmissionSchema = new mongoose.Schema(
     },
     rejectionReason: { type: String, default: null },
     reviewedAt: { type: Date, default: null },
+    reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   },
   { timestamps: true }
 );
