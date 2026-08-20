@@ -1,257 +1,201 @@
 /**
- * Medicine catalogue — public read APIs.
- *
- * Designed content-first: every response carries enough clinical detail to
- * render a page worth ranking, not just a price tag. The same endpoints
- * serve the mobile app today and the Next.js website later.
+ * Medicine catalogue — admin CRUD.
+ * Everything here is adminOnly. Public reads live in medicineRoutes.js.
  *
  * Wire into index.js:
- *   const medicineRoutes = require("./medicineRoutes");
- *   medicineRoutes(app, { auth, adminOnly });
+ *   const medicineAdminRoutes = require("./medicineAdminRoutes");
+ *   medicineAdminRoutes(app, { auth, adminOnly });
  */
 const Medicine = require("./models/Medicine");
 const Generic = require("./models/Generic");
 const Manufacturer = require("./models/Manufacturer");
 const DrugClass = require("./models/DrugClass");
 
-// Escape user input before putting it in a regex, so a stray "(" or "*"
-// can't break the query or be used to craft an expensive one.
-function safeRegex(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+function slugify(str) {
+  return str
+    .toString().trim().toLowerCase()
+    .replace(/[^a-z0-9\s-]/g, "")
+    .replace(/\s+/g, "-")
+    .replace(/-+/g, "-");
 }
 
-module.exports = function medicineRoutes(app, deps) {
+/** Ensure a slug is unique for the given model, appending -2, -3... if not. */
+async function uniqueSlug(Model, base, excludeId) {
+  let slug = slugify(base);
+  if (!slug) slug = "item";
+  let candidate = slug;
+  let n = 2;
+  while (await Model.exists({ slug: candidate, ...(excludeId ? { _id: { $ne: excludeId } } : {}) })) {
+    candidate = `${slug}-${n++}`;
+  }
+  return candidate;
+}
+
+module.exports = function medicineAdminRoutes(app, deps) {
   const { auth, adminOnly } = deps;
 
-  /**
-   * GET /api/medicines/search?q=nap&limit=20
-   *
-   * Prefix-first search: typing "nap" must surface "Napa" immediately.
-   * MongoDB's text index only matches whole words, so we lead with an
-   * anchored regex (index-backed) and fall back to a broader contains
-   * match, then fill out with generic-name matches.
-   */
-  app.get("/api/medicines/search", async (req, res) => {
+  // ============ MANUFACTURERS ============
+  app.get("/api/admin/manufacturers", auth, adminOnly, async (req, res) => {
     try {
-      const q = (req.query.q || "").trim();
-      const limit = Math.min(parseInt(req.query.limit) || 20, 50);
-      if (q.length < 2) return res.json({ medicines: [], generics: [] });
-
-      const rx = safeRegex(q);
-      const startsWith = new RegExp("^" + rx, "i");
-      const contains = new RegExp(rx, "i");
-
-      const baseFilter = { isActive: true, isDiscontinued: false };
-      const projection = "brandName brandNameBangla slug strength dosageForm mrp price sellUnit packSizeLabel prescriptionRequired stock isAvailable images";
-      const populate = [
-        { path: "generic", select: "name nameBangla slug" },
-        { path: "manufacturer", select: "name slug" },
-      ];
-
-      // 1. Brands starting with the query — the strongest signal.
-      const starts = await Medicine.find({
-        ...baseFilter,
-        $or: [{ brandName: startsWith }, { brandNameBangla: startsWith }],
-      })
-        .select(projection).populate(populate)
-        .sort({ salesCount: -1 }).limit(limit).lean();
-
-      // 2. Brands merely containing it, excluding ones already found.
-      let results = starts;
-      if (results.length < limit) {
-        const more = await Medicine.find({
-          ...baseFilter,
-          _id: { $nin: results.map((m) => m._id) },
-          $or: [{ brandName: contains }, { brandNameBangla: contains }, { searchKeywords: contains }],
-        })
-          .select(projection).populate(populate)
-          .sort({ salesCount: -1 }).limit(limit - results.length).lean();
-        results = results.concat(more);
-      }
-
-      // 3. Brands whose GENERIC matches — someone searching "paracetamol"
-      //    wants every brand of it, not nothing.
-      const matchedGenerics = await Generic.find({
-        isActive: true,
-        $or: [{ name: contains }, { nameBangla: contains }],
-      }).select("name nameBangla slug").limit(10).lean();
-
-      if (results.length < limit && matchedGenerics.length) {
-        const byGeneric = await Medicine.find({
-          ...baseFilter,
-          _id: { $nin: results.map((m) => m._id) },
-          generic: { $in: matchedGenerics.map((g) => g._id) },
-        })
-          .select(projection).populate(populate)
-          .sort({ salesCount: -1 }).limit(limit - results.length).lean();
-        results = results.concat(byGeneric);
-      }
-
-      res.json({ medicines: results, generics: matchedGenerics });
-    } catch (err) {
-      res.status(400).json({ error: err.message });
-    }
+      const list = await Manufacturer.find().sort({ name: 1 });
+      res.json(list);
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+  app.post("/api/admin/manufacturers", auth, adminOnly, async (req, res) => {
+    try {
+      const { name, nameBangla, description, established, headquarters, website, logoUrl } = req.body;
+      if (!name) return res.status(400).json({ error: "Name is required" });
+      const slug = await uniqueSlug(Manufacturer, name);
+      const saved = await new Manufacturer({ name, nameBangla, slug, description, established, headquarters, website, logoUrl }).save();
+      res.status(201).json(saved);
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+  app.put("/api/admin/manufacturers/:id", auth, adminOnly, async (req, res) => {
+    try {
+      const updated = await Manufacturer.findByIdAndUpdate(req.params.id, req.body, { new: true });
+      if (!updated) return res.status(404).json({ error: "Not found" });
+      res.json(updated);
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+  app.delete("/api/admin/manufacturers/:id", auth, adminOnly, async (req, res) => {
+    try {
+      const inUse = await Medicine.exists({ manufacturer: req.params.id });
+      if (inUse) return res.status(409).json({ error: "Cannot delete — medicines exist under this manufacturer" });
+      await Manufacturer.findByIdAndDelete(req.params.id);
+      res.json({ ok: true });
+    } catch (err) { res.status(400).json({ error: err.message }); }
   });
 
-  /**
-   * GET /api/medicines — browse with filters and pagination.
-   * Filters: genericSlug, manufacturerSlug, drugClassSlug, prescriptionRequired, inStock
-   * Sort: popular | price_asc | price_desc | name
-   */
-  app.get("/api/medicines", async (req, res) => {
+  // ============ DRUG CLASSES ============
+  app.get("/api/admin/drug-classes", auth, adminOnly, async (req, res) => {
+    try {
+      const list = await DrugClass.find().sort({ name: 1 });
+      res.json(list);
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+  app.post("/api/admin/drug-classes", auth, adminOnly, async (req, res) => {
+    try {
+      const { name, nameBangla, description, descriptionBangla } = req.body;
+      if (!name) return res.status(400).json({ error: "Name is required" });
+      const slug = await uniqueSlug(DrugClass, name);
+      const saved = await new DrugClass({ name, nameBangla, slug, description, descriptionBangla }).save();
+      res.status(201).json(saved);
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+  app.put("/api/admin/drug-classes/:id", auth, adminOnly, async (req, res) => {
+    try {
+      const updated = await DrugClass.findByIdAndUpdate(req.params.id, req.body, { new: true });
+      if (!updated) return res.status(404).json({ error: "Not found" });
+      res.json(updated);
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+  app.delete("/api/admin/drug-classes/:id", auth, adminOnly, async (req, res) => {
+    try {
+      const inUse = await Generic.exists({ drugClasses: req.params.id });
+      if (inUse) return res.status(409).json({ error: "Cannot delete — generics are assigned to this class" });
+      await DrugClass.findByIdAndDelete(req.params.id);
+      res.json({ ok: true });
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+
+  // ============ GENERICS (the clinical content) ============
+  app.get("/api/admin/generics", auth, adminOnly, async (req, res) => {
+    try {
+      const q = req.query.q;
+      const filter = q ? { $or: [{ name: new RegExp(q, "i") }, { nameBangla: new RegExp(q, "i") }] } : {};
+      const list = await Generic.find(filter).populate("drugClasses", "name").sort({ name: 1 }).limit(100);
+      res.json(list);
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+  app.post("/api/admin/generics", auth, adminOnly, async (req, res) => {
+    try {
+      const body = req.body;
+      if (!body.name) return res.status(400).json({ error: "Name is required" });
+      const slug = await uniqueSlug(Generic, body.name);
+      const saved = await new Generic({ ...body, slug }).save();
+      res.status(201).json(saved);
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+  app.put("/api/admin/generics/:id", auth, adminOnly, async (req, res) => {
+    try {
+      const body = { ...req.body };
+      delete body.slug; // slug is set once at creation; editing name doesn't silently break existing links/URLs
+      const updated = await Generic.findByIdAndUpdate(req.params.id, body, { new: true });
+      if (!updated) return res.status(404).json({ error: "Not found" });
+      res.json(updated);
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+  app.delete("/api/admin/generics/:id", auth, adminOnly, async (req, res) => {
+    try {
+      const inUse = await Medicine.exists({ generic: req.params.id });
+      if (inUse) return res.status(409).json({ error: "Cannot delete — brand medicines use this generic" });
+      await Generic.findByIdAndDelete(req.params.id);
+      res.json({ ok: true });
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+
+  // ============ MEDICINES (brand products + inventory) ============
+  app.get("/api/admin/medicines", auth, adminOnly, async (req, res) => {
     try {
       const page = Math.max(parseInt(req.query.page) || 1, 1);
-      const limit = Math.min(parseInt(req.query.limit) || 20, 50);
-      const filter = { isActive: true, isDiscontinued: false };
-
-      if (req.query.genericSlug) {
-        const g = await Generic.findOne({ slug: req.query.genericSlug }).select("_id");
-        if (!g) return res.json({ medicines: [], total: 0, page, hasMore: false });
-        filter.generic = g._id;
-      }
-      if (req.query.manufacturerSlug) {
-        const m = await Manufacturer.findOne({ slug: req.query.manufacturerSlug }).select("_id");
-        if (!m) return res.json({ medicines: [], total: 0, page, hasMore: false });
-        filter.manufacturer = m._id;
-      }
-      if (req.query.drugClassSlug) {
-        const dc = await DrugClass.findOne({ slug: req.query.drugClassSlug }).select("_id");
-        if (!dc) return res.json({ medicines: [], total: 0, page, hasMore: false });
-        const generics = await Generic.find({ drugClasses: dc._id }).select("_id");
-        filter.generic = { $in: generics.map((g) => g._id) };
-      }
-      if (req.query.prescriptionRequired !== undefined) {
-        filter.prescriptionRequired = req.query.prescriptionRequired === "true";
-      }
-      if (req.query.inStock === "true") {
-        filter.stock = { $gt: 0 };
-        filter.isAvailable = true;
-      }
-
-      const sortMap = {
-        popular: { salesCount: -1 },
-        price_asc: { price: 1 },
-        price_desc: { price: -1 },
-        name: { brandName: 1 },
-      };
-      const sort = sortMap[req.query.sort] || sortMap.popular;
+      const limit = Math.min(parseInt(req.query.limit) || 30, 100);
+      const filter = {};
+      if (req.query.q) filter.brandName = new RegExp(req.query.q, "i");
+      if (req.query.lowStock === "true") filter.$expr = { $lte: ["$stock", "$lowStockThreshold"] };
 
       const [medicines, total] = await Promise.all([
         Medicine.find(filter)
-          .select("brandName brandNameBangla slug strength dosageForm mrp price sellUnit packSizeLabel prescriptionRequired stock isAvailable images")
-          .populate("generic", "name nameBangla slug")
-          .populate("manufacturer", "name slug")
-          .sort(sort).skip((page - 1) * limit).limit(limit).lean(),
+          .populate("generic", "name").populate("manufacturer", "name")
+          .sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit),
         Medicine.countDocuments(filter),
       ]);
-
       res.json({ medicines, total, page, hasMore: page * limit < total });
-    } catch (err) {
-      res.status(400).json({ error: err.message });
-    }
+    } catch (err) { res.status(400).json({ error: err.message }); }
   });
-
-  /**
-   * GET /api/medicines/:slug — full product page.
-   * Returns the brand, its complete clinical content (via the generic),
-   * and cheaper alternative brands of the same generic.
-   */
-  app.get("/api/medicines/:slug", async (req, res) => {
+  app.post("/api/admin/medicines", auth, adminOnly, async (req, res) => {
     try {
-      const medicine = await Medicine.findOne({ slug: req.params.slug, isActive: true })
-        .populate({
-          path: "generic",
-          populate: { path: "drugClasses", select: "name nameBangla slug" },
-        })
-        .populate("manufacturer", "name nameBangla slug logoUrl");
-      if (!medicine) return res.status(404).json({ error: "Medicine not found" });
-
-      // Same generic, different brands — sorted cheapest first. This is a
-      // genuinely useful feature in Bangladesh, where the same molecule can
-      // vary several-fold in price between companies.
-      const alternatives = await Medicine.find({
-        generic: medicine.generic._id,
-        _id: { $ne: medicine._id },
-        isActive: true,
-        isDiscontinued: false,
-      })
-        .select("brandName slug strength dosageForm price mrp sellUnit stock isAvailable")
-        .populate("manufacturer", "name slug")
-        .sort({ price: 1 })
-        .limit(20)
-        .lean();
-
-      // Fire-and-forget popularity signal; never block the response on it.
-      Medicine.updateOne({ _id: medicine._id }, { $inc: { viewCount: 1 } }).catch(() => {});
-
-      res.json({ medicine, alternatives });
-    } catch (err) {
-      res.status(400).json({ error: err.message });
-    }
+      const body = req.body;
+      if (!body.brandName || !body.generic || !body.manufacturer || body.mrp == null || body.price == null) {
+        return res.status(400).json({ error: "Brand name, generic, manufacturer, MRP, and price are required" });
+      }
+      if (body.price > body.mrp) {
+        return res.status(400).json({ error: "Selling price cannot exceed MRP" });
+      }
+      const slugBase = `${body.brandName}-${body.strength || ""}`;
+      const slug = await uniqueSlug(Medicine, slugBase);
+      const saved = await new Medicine({ ...body, slug }).save();
+      res.status(201).json(saved);
+    } catch (err) { res.status(400).json({ error: err.message }); }
   });
-
-  /**
-   * GET /api/generics/:slug — the generic information page.
-   * This is the page most likely to rank for "what is X / X এর কাজ কি".
-   */
-  app.get("/api/generics/:slug", async (req, res) => {
+  app.put("/api/admin/medicines/:id", auth, adminOnly, async (req, res) => {
     try {
-      const generic = await Generic.findOne({ slug: req.params.slug, isActive: true })
-        .populate("drugClasses", "name nameBangla slug");
-      if (!generic) return res.status(404).json({ error: "Generic not found" });
-
-      const brands = await Medicine.find({
-        generic: generic._id, isActive: true, isDiscontinued: false,
-      })
-        .select("brandName brandNameBangla slug strength dosageForm price mrp sellUnit packSizeLabel stock isAvailable prescriptionRequired images")
-        .populate("manufacturer", "name slug")
-        .sort({ price: 1 })
-        .lean();
-
-      res.json({ generic, brands, brandCount: brands.length });
-    } catch (err) {
-      res.status(400).json({ error: err.message });
-    }
+      const body = { ...req.body };
+      delete body.slug;
+      if (body.price != null && body.mrp != null && body.price > body.mrp) {
+        return res.status(400).json({ error: "Selling price cannot exceed MRP" });
+      }
+      const updated = await Medicine.findByIdAndUpdate(req.params.id, body, { new: true })
+        .populate("generic", "name").populate("manufacturer", "name");
+      if (!updated) return res.status(404).json({ error: "Not found" });
+      res.json(updated);
+    } catch (err) { res.status(400).json({ error: err.message }); }
   });
-
-  /** GET /api/generics — A-Z index (browse + sitemap source). */
-  app.get("/api/generics", async (req, res) => {
+  /** Dedicated stock-adjustment endpoint — clearer audit trail than a generic PUT. */
+  app.patch("/api/admin/medicines/:id/stock", auth, adminOnly, async (req, res) => {
     try {
-      const page = Math.max(parseInt(req.query.page) || 1, 1);
-      const limit = Math.min(parseInt(req.query.limit) || 50, 200);
-      const filter = { isActive: true };
-      if (req.query.letter) filter.name = new RegExp("^" + safeRegex(req.query.letter), "i");
-
-      const [generics, total] = await Promise.all([
-        Generic.find(filter).select("name nameBangla slug").sort({ name: 1 })
-          .skip((page - 1) * limit).limit(limit).lean(),
-        Generic.countDocuments(filter),
-      ]);
-      res.json({ generics, total, page, hasMore: page * limit < total });
-    } catch (err) {
-      res.status(400).json({ error: err.message });
-    }
+      const { delta, setTo } = req.body; // delta: +/- change, OR setTo: absolute value
+      const medicine = await Medicine.findById(req.params.id);
+      if (!medicine) return res.status(404).json({ error: "Not found" });
+      if (setTo != null) medicine.stock = Math.max(0, Number(setTo));
+      else medicine.stock = Math.max(0, medicine.stock + Number(delta || 0));
+      await medicine.save();
+      res.json(medicine);
+    } catch (err) { res.status(400).json({ error: err.message }); }
   });
-
-  /** GET /api/manufacturers — company index. */
-  app.get("/api/manufacturers", async (req, res) => {
+  app.delete("/api/admin/medicines/:id", auth, adminOnly, async (req, res) => {
     try {
-      const manufacturers = await Manufacturer.find({ isActive: true })
-        .select("name nameBangla slug logoUrl").sort({ name: 1 }).lean();
-      res.json(manufacturers);
-    } catch (err) {
-      res.status(400).json({ error: err.message });
-    }
-  });
-
-  /** GET /api/drug-classes — therapeutic class index. */
-  app.get("/api/drug-classes", async (req, res) => {
-    try {
-      const classes = await DrugClass.find({ isActive: true })
-        .select("name nameBangla slug description").sort({ name: 1 }).lean();
-      res.json(classes);
-    } catch (err) {
-      res.status(400).json({ error: err.message });
-    }
+      await Medicine.findByIdAndUpdate(req.params.id, { isActive: false, isDiscontinued: true });
+      res.json({ ok: true });
+    } catch (err) { res.status(400).json({ error: err.message }); }
   });
 };
