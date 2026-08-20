@@ -15,6 +15,7 @@ const medicineSchema = new mongoose.Schema(
     slug: { type: String, required: true, unique: true, lowercase: true, index: true },
 
     generic: { type: mongoose.Schema.Types.ObjectId, ref: "Generic", required: true, index: true },
+    categories: [{ type: mongoose.Schema.Types.ObjectId, ref: "Category", index: true }],
     manufacturer: { type: mongoose.Schema.Types.ObjectId, ref: "Manufacturer", required: true, index: true },
 
     strength: { type: String, default: null },        // "500 mg"

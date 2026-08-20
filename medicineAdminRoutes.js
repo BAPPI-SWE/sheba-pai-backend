@@ -10,6 +10,7 @@ const Medicine = require("./models/Medicine");
 const Generic = require("./models/Generic");
 const Manufacturer = require("./models/Manufacturer");
 const DrugClass = require("./models/DrugClass");
+const Category = require("./models/Category");
 
 function slugify(str) {
   return str
@@ -98,6 +99,40 @@ module.exports = function medicineAdminRoutes(app, deps) {
     } catch (err) { res.status(400).json({ error: err.message }); }
   });
 
+  // ============ CATEGORIES (consumer-facing shopping grid) ============
+  app.get("/api/admin/categories", auth, adminOnly, async (req, res) => {
+    try {
+      const list = await Category.find().sort({ sortOrder: 1, name: 1 });
+      res.json(list);
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+  app.post("/api/admin/categories", auth, adminOnly, async (req, res) => {
+    try {
+      const { name, nameBangla, icon, tone, sortOrder, isFeatured } = req.body;
+      if (!name) return res.status(400).json({ error: "Name is required" });
+      const slug = await uniqueSlug(Category, name);
+      const saved = await new Category({ name, nameBangla, slug, icon, tone, sortOrder, isFeatured }).save();
+      res.status(201).json(saved);
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+  app.put("/api/admin/categories/:id", auth, adminOnly, async (req, res) => {
+    try {
+      const body = { ...req.body };
+      delete body.slug;
+      const updated = await Category.findByIdAndUpdate(req.params.id, body, { new: true });
+      if (!updated) return res.status(404).json({ error: "Not found" });
+      res.json(updated);
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+  app.delete("/api/admin/categories/:id", auth, adminOnly, async (req, res) => {
+    try {
+      const inUse = await Medicine.exists({ categories: req.params.id });
+      if (inUse) return res.status(409).json({ error: "Cannot delete — medicines are assigned to this category" });
+      await Category.findByIdAndDelete(req.params.id);
+      res.json({ ok: true });
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+
   // ============ GENERICS (the clinical content) ============
   app.get("/api/admin/generics", auth, adminOnly, async (req, res) => {
     try {
@@ -145,7 +180,7 @@ module.exports = function medicineAdminRoutes(app, deps) {
 
       const [medicines, total] = await Promise.all([
         Medicine.find(filter)
-          .populate("generic", "name").populate("manufacturer", "name")
+          .populate("generic", "name").populate("manufacturer", "name").populate("categories", "name")
           .sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit),
         Medicine.countDocuments(filter),
       ]);

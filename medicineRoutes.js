@@ -13,6 +13,7 @@ const Medicine = require("./models/Medicine");
 const Generic = require("./models/Generic");
 const Manufacturer = require("./models/Manufacturer");
 const DrugClass = require("./models/DrugClass");
+const Category = require("./models/Category");
 
 // Escape user input before putting it in a regex, so a stray "(" or "*"
 // can't break the query or be used to craft an expensive one.
@@ -119,6 +120,11 @@ module.exports = function medicineRoutes(app, deps) {
         if (!dc) return res.json({ medicines: [], total: 0, page, hasMore: false });
         const generics = await Generic.find({ drugClasses: dc._id }).select("_id");
         filter.generic = { $in: generics.map((g) => g._id) };
+      }
+      if (req.query.categorySlug) {
+        const cat = await Category.findOne({ slug: req.query.categorySlug }).select("_id");
+        if (!cat) return res.json({ medicines: [], total: 0, page, hasMore: false });
+        filter.categories = cat._id;
       }
       if (req.query.prescriptionRequired !== undefined) {
         filter.prescriptionRequired = req.query.prescriptionRequired === "true";
@@ -239,6 +245,20 @@ module.exports = function medicineRoutes(app, deps) {
       const manufacturers = await Manufacturer.find({ isActive: true })
         .select("name nameBangla slug logoUrl").sort({ name: 1 }).lean();
       res.json(manufacturers);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  /** GET /api/categories — consumer shopping categories, for the store's grid. */
+  app.get("/api/categories", async (req, res) => {
+    try {
+      const filter = { isActive: true };
+      if (req.query.featured === "true") filter.isFeatured = true;
+      const categories = await Category.find(filter)
+        .select("name nameBangla slug icon tone isFeatured")
+        .sort({ sortOrder: 1, name: 1 });
+      res.json(categories);
     } catch (err) {
       res.status(400).json({ error: err.message });
     }
