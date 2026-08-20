@@ -22,6 +22,7 @@ const ratingsRoutes = require("./ratingsRoutes");
 const browseRoutes = require("./browseRoutes");
 const commissionRoutes = require("./commissionRoutes");
 const reportsRoutes = require("./reportsRoutes");
+const medicineRoutes = require("./medicineRoutes");
 const { sendPush } = require("./pushService");
 const { finalizeJobEarnings, isHelperRestricted, getSettings } = require("./commissionRoutes");
 const { isHelperClearedForService } = require("./eligibility");
@@ -796,6 +797,9 @@ commissionRoutes(app, { auth, adminOnly, helperOnly });
 
 // --- REPORTS: admin accountability + commission overview ---
 reportsRoutes(app, { auth, adminOnly });
+
+// --- MEDICINE CATALOGUE: search, browse, product + generic pages ---
+medicineRoutes(app, { auth, adminOnly });
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running at http://localhost:${PORT}`);
