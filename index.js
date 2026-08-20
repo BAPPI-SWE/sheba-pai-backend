@@ -24,6 +24,7 @@ const commissionRoutes = require("./commissionRoutes");
 const reportsRoutes = require("./reportsRoutes");
 const medicineRoutes = require("./medicineRoutes");
 const medicineAdminRoutes = require("./medicineAdminRoutes");
+const orderRoutes = require("./orderRoutes");
 const { sendPush } = require("./pushService");
 const { finalizeJobEarnings, isHelperRestricted, getSettings } = require("./commissionRoutes");
 const { isHelperClearedForService } = require("./eligibility");
@@ -802,6 +803,7 @@ reportsRoutes(app, { auth, adminOnly });
 // --- MEDICINE CATALOGUE: search, browse, product + generic pages ---
 medicineRoutes(app, { auth, adminOnly });
 medicineAdminRoutes(app, { auth, adminOnly });
+orderRoutes(app, { auth, adminOnly, upload, uploadToCloudinary });
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running at http://localhost:${PORT}`);
