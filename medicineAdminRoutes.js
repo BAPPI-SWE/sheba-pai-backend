@@ -33,7 +33,7 @@ async function uniqueSlug(Model, base, excludeId) {
 }
 
 module.exports = function medicineAdminRoutes(app, deps) {
-  const { auth, adminOnly } = deps;
+  const { auth, adminOnly, upload, uploadToCloudinary } = deps;
 
   // ============ MANUFACTURERS ============
   app.get("/api/admin/manufacturers", auth, adminOnly, async (req, res) => {
@@ -227,6 +227,34 @@ module.exports = function medicineAdminRoutes(app, deps) {
       res.json(medicine);
     } catch (err) { res.status(400).json({ error: err.message }); }
   });
+  /** Upload a product photo. First upload becomes the primary image. */
+  app.post("/api/admin/medicines/:id/images", auth, adminOnly, upload.single("image"), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "No image provided" });
+      const medicine = await Medicine.findById(req.params.id);
+      if (!medicine) return res.status(404).json({ error: "Not found" });
+
+      const url = await uploadToCloudinary(req.file.buffer, "medicines");
+      medicine.images.push(url);
+      await medicine.save();
+      res.status(201).json({ images: medicine.images });
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+
+  /** Remove one image by URL (order matters: the first remaining image becomes primary). */
+  app.delete("/api/admin/medicines/:id/images", auth, adminOnly, async (req, res) => {
+    try {
+      const { url } = req.body;
+      const medicine = await Medicine.findByIdAndUpdate(
+        req.params.id,
+        { $pull: { images: url } },
+        { new: true }
+      );
+      if (!medicine) return res.status(404).json({ error: "Not found" });
+      res.json({ images: medicine.images });
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+
   app.delete("/api/admin/medicines/:id", auth, adminOnly, async (req, res) => {
     try {
       await Medicine.findByIdAndUpdate(req.params.id, { isActive: false, isDiscontinued: true });

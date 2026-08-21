@@ -802,7 +802,7 @@ reportsRoutes(app, { auth, adminOnly });
 
 // --- MEDICINE CATALOGUE: search, browse, product + generic pages ---
 medicineRoutes(app, { auth, adminOnly });
-medicineAdminRoutes(app, { auth, adminOnly });
+medicineAdminRoutes(app, { auth, adminOnly, upload, uploadToCloudinary });
 orderRoutes(app, { auth, adminOnly, upload, uploadToCloudinary });
 
 server.listen(PORT, "0.0.0.0", () => {
