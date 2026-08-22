@@ -25,6 +25,7 @@ const reportsRoutes = require("./reportsRoutes");
 const medicineRoutes = require("./medicineRoutes");
 const medicineAdminRoutes = require("./medicineAdminRoutes");
 const orderRoutes = require("./orderRoutes");
+const medicineImportRoutes = require("./medicineImportRoutes");
 const { sendPush } = require("./pushService");
 const { finalizeJobEarnings, isHelperRestricted, getSettings } = require("./commissionRoutes");
 const { isHelperClearedForService } = require("./eligibility");
@@ -804,6 +805,7 @@ reportsRoutes(app, { auth, adminOnly });
 medicineRoutes(app, { auth, adminOnly });
 medicineAdminRoutes(app, { auth, adminOnly, upload, uploadToCloudinary });
 orderRoutes(app, { auth, adminOnly, upload, uploadToCloudinary });
+medicineImportRoutes(app, { auth, adminOnly, upload });
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running at http://localhost:${PORT}`);
