@@ -11,6 +11,7 @@ const Generic = require("./models/Generic");
 const Manufacturer = require("./models/Manufacturer");
 const DrugClass = require("./models/DrugClass");
 const Category = require("./models/Category");
+const { withPricing } = require("./pricing");
 
 function slugify(str) {
   return str
@@ -184,7 +185,7 @@ module.exports = function medicineAdminRoutes(app, deps) {
           .sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit),
         Medicine.countDocuments(filter),
       ]);
-      res.json({ medicines, total, page, hasMore: page * limit < total });
+      res.json({ medicines: medicines.map((m) => withPricing(m)), total, page, hasMore: page * limit < total });
     } catch (err) { res.status(400).json({ error: err.message }); }
   });
   app.post("/api/admin/medicines", auth, adminOnly, async (req, res) => {
@@ -195,6 +196,12 @@ module.exports = function medicineAdminRoutes(app, deps) {
       }
       if (body.price > body.mrp) {
         return res.status(400).json({ error: "Selling price cannot exceed MRP" });
+      }
+      if (body.discountPercent && (body.discountPercent < 0 || body.discountPercent > 90)) {
+        return res.status(400).json({ error: "Discount must be between 0 and 90%" });
+      }
+      if (body.discountStartsAt && body.discountEndsAt && new Date(body.discountEndsAt) <= new Date(body.discountStartsAt)) {
+        return res.status(400).json({ error: "Discount end date must be after the start date" });
       }
       const slugBase = `${body.brandName}-${body.strength || ""}`;
       const slug = await uniqueSlug(Medicine, slugBase);
@@ -209,10 +216,16 @@ module.exports = function medicineAdminRoutes(app, deps) {
       if (body.price != null && body.mrp != null && body.price > body.mrp) {
         return res.status(400).json({ error: "Selling price cannot exceed MRP" });
       }
+      if (body.discountPercent != null && (body.discountPercent < 0 || body.discountPercent > 90)) {
+        return res.status(400).json({ error: "Discount must be between 0 and 90%" });
+      }
+      if (body.discountStartsAt && body.discountEndsAt && new Date(body.discountEndsAt) <= new Date(body.discountStartsAt)) {
+        return res.status(400).json({ error: "Discount end date must be after the start date" });
+      }
       const updated = await Medicine.findByIdAndUpdate(req.params.id, body, { new: true })
         .populate("generic", "name").populate("manufacturer", "name");
       if (!updated) return res.status(404).json({ error: "Not found" });
-      res.json(updated);
+      res.json(withPricing(updated));
     } catch (err) { res.status(400).json({ error: err.message }); }
   });
   /** Dedicated stock-adjustment endpoint — clearer audit trail than a generic PUT. */

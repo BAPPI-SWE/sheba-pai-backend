@@ -8,6 +8,7 @@
 const mongoose = require("mongoose");
 const Medicine = require("./models/Medicine");
 const Order = require("./models/Order");
+const { priceInfo } = require("./pricing");
 
 module.exports = function orderRoutes(app, deps) {
   const { auth, adminOnly, upload, uploadToCloudinary } = deps;
@@ -55,11 +56,15 @@ module.exports = function orderRoutes(app, deps) {
         decremented.push({ id: medicine._id, qty });
 
         if (medicine.prescriptionRequired) needsPrescription = true;
-        const lineTotal = medicine.price * qty;
+        // Charge whatever price is ACTUALLY in effect right now — a
+        // discount is only real if checkout honors it, not just the
+        // product page. Same calculation used everywhere else.
+        const { effectivePrice } = priceInfo(medicine);
+        const lineTotal = Math.round(effectivePrice * qty * 100) / 100;
         subtotal += lineTotal;
         orderItems.push({
           medicine: medicine._id, brandName: medicine.brandName, strength: medicine.strength,
-          quantity: qty, unitPrice: medicine.price, lineTotal, prescriptionRequired: medicine.prescriptionRequired,
+          quantity: qty, unitPrice: effectivePrice, lineTotal, prescriptionRequired: medicine.prescriptionRequired,
         });
       }
 

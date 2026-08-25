@@ -49,6 +49,15 @@ const medicineSchema = new mongoose.Schema(
 
     images: [{ type: String }],
 
+    // --- Promotions ---
+    // A discount is only real if it changes what's actually charged at
+    // checkout, not just what's displayed. See pricing.js for the single
+    // shared calculation used everywhere — product pages, listings, and
+    // the order itself all call the same function.
+    discountPercent: { type: Number, default: 0, min: 0, max: 90 },
+    discountStartsAt: { type: Date, default: null },
+    discountEndsAt: { type: Date, default: null },
+
     // --- Merchandising / ranking ---
     searchKeywords: [{ type: String }],   // common misspellings, Bangla spellings
     salesCount: { type: Number, default: 0 },

@@ -13,7 +13,15 @@ const Medicine = require("./models/Medicine");
 const Generic = require("./models/Generic");
 const Manufacturer = require("./models/Manufacturer");
 const DrugClass = require("./models/DrugClass");
+const { priceInfo } = require("./pricing");
 const Category = require("./models/Category");
+
+// Attach { onSale, effectivePrice, discountPercent } onto each medicine in
+// a list — the same calculation checkout uses, so display and charge can
+// never disagree.
+function withPricing(list) {
+  return list.map((m) => Object.assign(m, priceInfo(m)));
+}
 
 // Escape user input before putting it in a regex, so a stray "(" or "*"
 // can't break the query or be used to craft an expensive one.
@@ -88,7 +96,7 @@ module.exports = function medicineRoutes(app, deps) {
         results = results.concat(byGeneric);
       }
 
-      res.json({ medicines: results, generics: matchedGenerics });
+      res.json({ medicines: withPricing(results), generics: matchedGenerics });
     } catch (err) {
       res.status(400).json({ error: err.message });
     }
@@ -133,6 +141,15 @@ module.exports = function medicineRoutes(app, deps) {
         filter.stock = { $gt: 0 };
         filter.isAvailable = true;
       }
+      if (req.query.onSale === "true") {
+        filter.discountPercent = { $gt: 0 };
+        filter.$or = [
+          { discountStartsAt: null }, { discountStartsAt: { $lte: new Date() } },
+        ];
+        filter.$and = [
+          { $or: [{ discountEndsAt: null }, { discountEndsAt: { $gte: new Date() } }] },
+        ];
+      }
 
       const sortMap = {
         popular: { salesCount: -1 },
@@ -151,7 +168,7 @@ module.exports = function medicineRoutes(app, deps) {
         Medicine.countDocuments(filter),
       ]);
 
-      res.json({ medicines, total, page, hasMore: page * limit < total });
+      res.json({ medicines: withPricing(medicines), total, page, hasMore: page * limit < total });
     } catch (err) {
       res.status(400).json({ error: err.message });
     }
@@ -190,7 +207,7 @@ module.exports = function medicineRoutes(app, deps) {
       // Fire-and-forget popularity signal; never block the response on it.
       Medicine.updateOne({ _id: medicine._id }, { $inc: { viewCount: 1 } }).catch(() => {});
 
-      res.json({ medicine, alternatives });
+      res.json({ medicine: withPricing([medicine.toObject()])[0], alternatives: withPricing(alternatives) });
     } catch (err) {
       res.status(400).json({ error: err.message });
     }
@@ -214,7 +231,7 @@ module.exports = function medicineRoutes(app, deps) {
         .sort({ price: 1 })
         .lean();
 
-      res.json({ generic, brands, brandCount: brands.length });
+      res.json({ generic, brands: withPricing(brands), brandCount: brands.length });
     } catch (err) {
       res.status(400).json({ error: err.message });
     }
