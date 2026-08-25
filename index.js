@@ -175,7 +175,12 @@ app.post("/api/auth/signup", async (req, res) => {
     // "admin" must never be settable from an unauthenticated request —
     // admin accounts are created exclusively through the protected
     // /api/admin/admins endpoint by an already-logged-in admin.
-    if (!["patient", "helper"].includes(role)) {
+    // "shop" and "rider" are added here deliberately: like caregivers,
+    // they self-register and then go through admin verification before
+    // they can do anything. "admin" remains impossible to self-assign —
+    // that's still only creatable via the protected /api/admin/admins
+    // endpoint by an already-logged-in admin.
+    if (!["patient", "helper", "shop", "rider"].includes(role)) {
       return res.status(400).json({ error: "Invalid role" });
     }
     const existing = await User.findOne({ phone });

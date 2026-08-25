@@ -39,11 +39,31 @@ const orderSchema = new mongoose.Schema(
     paymentMethod: { type: String, enum: ["cod"], default: "cod" }, // more methods later
     prescriptionUrl: { type: String, default: null }, // required if any item needs Rx
 
+    // "confirmed" is used only in the central-courier path (admin manually
+    // confirms before dispatch). "rider_assigned" / "picked_up" only exist
+    // in the local-shop path. Both paths converge on "out_for_delivery"
+    // and "delivered", so patient-facing tracking UI doesn't need to know
+    // which path an order took to show a coherent progress view.
     status: {
       type: String,
-      enum: ["pending", "confirmed", "out_for_delivery", "delivered", "cancelled"],
+      enum: ["pending", "confirmed", "rider_assigned", "picked_up", "out_for_delivery", "delivered", "cancelled"],
       default: "pending",
       index: true,
+    },
+
+    // --- Fulfillment routing (decided once, at checkout, never changed) ---
+    fulfillmentType: { type: String, enum: ["local", "central"], default: "central" },
+    isInsideDhaka: { type: Boolean, default: true },
+
+    // --- Local-shop-and-rider fulfillment ---
+    matchedShop: { type: mongoose.Schema.Types.ObjectId, ref: "Shop", default: null },
+    assignedRider: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
+    pickupCode: { type: String, default: null }, // short code the shop verifies before releasing goods to the rider
+    pickupVerifiedAt: { type: Date, default: null },
+    riderEtaMinutes: { type: Number, default: null }, // set by the rider once en route
+    riderLocation: {
+      type: { type: String, enum: ["Point"], default: "Point" },
+      coordinates: { type: [Number], default: undefined },
     },
     cancelReason: { type: String, default: null },
     statusHistory: [
