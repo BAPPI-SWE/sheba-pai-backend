@@ -12,8 +12,8 @@ const shopSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true },
     address: { type: String, required: true },
     location: {
-      type: { type: String, enum: ["Point"], default: "Point" },
-      coordinates: { type: [Number], required: true }, // [lng, lat]
+      type: { type: String, enum: ["Point"] },
+      coordinates: { type: [Number], default: undefined, required: true }, // [lng, lat]
     },
     contactPhone: { type: String, required: true },
 

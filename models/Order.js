@@ -33,12 +33,12 @@ const orderSchema = new mongoose.Schema(
     // Same defensive fix as RiderProfile: no default on `type`, so an
     // Order created by some future path without coordinates yet stays
     // fully unset rather than becoming a half-formed, index-crashing
-    // GeoJSON point. Today's checkout always supplies real coordinates
-    // before save, but that shouldn't be the only thing standing between
-    // this schema and the same crash.
+    // GeoJSON point. `default: undefined` on coordinates is required,
+    // not optional — Mongoose auto-defaults array fields to [] otherwise,
+    // which is its own invalid-GeoJSON shape (a real bug this project hit).
     location: {
       type: { type: String, enum: ["Point"] },
-      coordinates: { type: [Number] }, // [lng, lat]
+      coordinates: { type: [Number], default: undefined }, // [lng, lat]
     },
     contactPhone: { type: String, required: true },
 
@@ -69,11 +69,11 @@ const orderSchema = new mongoose.Schema(
     riderEtaMinutes: { type: Number, default: null }, // set by the rider once en route
     deliveredAt: { type: Date, default: null },
     // Not 2dsphere-indexed today, but same defensive fix for consistency —
-    // no default on `type` so an untouched riderLocation stays fully
-    // unset instead of a half-formed GeoJSON point.
+    // no default on `type`, and `default: undefined` on coordinates to
+    // override Mongoose's array-defaults-to-[] behavior.
     riderLocation: {
       type: { type: String, enum: ["Point"] },
-      coordinates: { type: [Number] },
+      coordinates: { type: [Number], default: undefined },
     },
     cancelReason: { type: String, default: null },
     statusHistory: [

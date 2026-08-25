@@ -24,16 +24,21 @@ const riderProfileSchema = new mongoose.Schema(
     reviewedAt: { type: Date, default: null },
 
     isAvailable: { type: Boolean, default: false },
-    // No default on `type` here, deliberately: a rider has no location at
-    // all when their profile is first created (that only comes later,
-    // when they go online). If `type` defaulted to "Point", Mongoose
-    // would create a half-formed { type: "Point" } with no coordinates —
-    // invalid GeoJSON that crashes the 2dsphere index. Leaving both
-    // subfields default-free means an untouched location stays fully
-    // absent, which the index correctly and safely skips.
+    // No default on `type` — a rider has no location at all when their
+    // profile is first created (that only comes later, when they go
+    // online). If `type` defaulted to "Point", Mongoose would create a
+    // half-formed { type: "Point" } with no coordinates — invalid GeoJSON
+    // that crashes the 2dsphere index.
+    //
+    // `default: undefined` on `coordinates` is NOT optional decoration —
+    // Mongoose auto-defaults ALL array-type fields to [] unless told
+    // otherwise. Without this, an untouched location becomes
+    // { coordinates: [] } instead of fully absent — still invalid
+    // GeoJSON, just a different broken shape. Removing this line was
+    // exactly what caused the second crash after the first fix.
     location: {
       type: { type: String, enum: ["Point"] },
-      coordinates: { type: [Number] },
+      coordinates: { type: [Number], default: undefined },
     },
 
     ratingAvg: { type: Number, default: 0 },
