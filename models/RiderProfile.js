@@ -24,9 +24,16 @@ const riderProfileSchema = new mongoose.Schema(
     reviewedAt: { type: Date, default: null },
 
     isAvailable: { type: Boolean, default: false },
+    // No default on `type` here, deliberately: a rider has no location at
+    // all when their profile is first created (that only comes later,
+    // when they go online). If `type` defaulted to "Point", Mongoose
+    // would create a half-formed { type: "Point" } with no coordinates —
+    // invalid GeoJSON that crashes the 2dsphere index. Leaving both
+    // subfields default-free means an untouched location stays fully
+    // absent, which the index correctly and safely skips.
     location: {
-      type: { type: String, enum: ["Point"], default: "Point" },
-      coordinates: { type: [Number], default: undefined },
+      type: { type: String, enum: ["Point"] },
+      coordinates: { type: [Number] },
     },
 
     ratingAvg: { type: Number, default: 0 },

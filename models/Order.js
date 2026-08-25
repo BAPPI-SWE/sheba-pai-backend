@@ -30,9 +30,15 @@ const orderSchema = new mongoose.Schema(
     // Delivery destination — same shape as caregiver requests, reusing
     // the location system already built (map pin / saved address / GPS).
     address: { type: String, default: null },
+    // Same defensive fix as RiderProfile: no default on `type`, so an
+    // Order created by some future path without coordinates yet stays
+    // fully unset rather than becoming a half-formed, index-crashing
+    // GeoJSON point. Today's checkout always supplies real coordinates
+    // before save, but that shouldn't be the only thing standing between
+    // this schema and the same crash.
     location: {
-      type: { type: String, enum: ["Point"], default: "Point" },
-      coordinates: { type: [Number], default: undefined }, // [lng, lat]
+      type: { type: String, enum: ["Point"] },
+      coordinates: { type: [Number] }, // [lng, lat]
     },
     contactPhone: { type: String, required: true },
 
@@ -62,9 +68,12 @@ const orderSchema = new mongoose.Schema(
     pickupVerifiedAt: { type: Date, default: null },
     riderEtaMinutes: { type: Number, default: null }, // set by the rider once en route
     deliveredAt: { type: Date, default: null },
+    // Not 2dsphere-indexed today, but same defensive fix for consistency —
+    // no default on `type` so an untouched riderLocation stays fully
+    // unset instead of a half-formed GeoJSON point.
     riderLocation: {
-      type: { type: String, enum: ["Point"], default: "Point" },
-      coordinates: { type: [Number], default: undefined },
+      type: { type: String, enum: ["Point"] },
+      coordinates: { type: [Number] },
     },
     cancelReason: { type: String, default: null },
     statusHistory: [
