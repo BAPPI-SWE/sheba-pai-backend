@@ -61,6 +61,7 @@ const orderSchema = new mongoose.Schema(
     pickupCode: { type: String, default: null }, // short code the shop verifies before releasing goods to the rider
     pickupVerifiedAt: { type: Date, default: null },
     riderEtaMinutes: { type: Number, default: null }, // set by the rider once en route
+    deliveredAt: { type: Date, default: null },
     riderLocation: {
       type: { type: String, enum: ["Point"], default: "Point" },
       coordinates: { type: [Number], default: undefined },

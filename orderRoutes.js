@@ -8,10 +8,45 @@
 const mongoose = require("mongoose");
 const Medicine = require("./models/Medicine");
 const Order = require("./models/Order");
+const ShopStock = require("./models/ShopStock");
+const Shop = require("./models/Shop");
+const RiderProfile = require("./models/RiderProfile");
 const { priceInfo } = require("./pricing");
+const { decideFulfillment, generatePickupCode, getSettings } = require("./deliveryRouting");
+const { sendPush } = require("./pushService");
+
+/** Notify online, approved riders near the matched shop about a new job. */
+async function notifyNearbyRiders(io, shop, order) {
+  try {
+    const settings = await getSettings();
+    const riders = await RiderProfile.find({
+      verificationStatus: "approved",
+      isAvailable: true,
+      location: {
+        $near: {
+          $geometry: { type: "Point", coordinates: shop.location.coordinates },
+          $maxDistance: settings.riderMatchRadiusKm * 1000,
+        },
+      },
+    }).select("user");
+
+    if (riders.length === 0) return;
+    const riderUserIds = riders.map((r) => r.user);
+
+    if (io) riderUserIds.forEach((uid) => io.to(uid.toString()).emit("newDeliveryJob", { orderId: order._id }));
+
+    sendPush(riderUserIds, {
+      title: "নতুন ডেলিভারি অর্ডার",
+      body: `${shop.name} থেকে ওষুধ সংগ্রহ করে ডেলিভারি দিন`,
+      data: { type: "new_delivery_job", orderId: String(order._id) },
+    });
+  } catch (err) {
+    console.error("Rider notification failed:", err.message);
+  }
+}
 
 module.exports = function orderRoutes(app, deps) {
-  const { auth, adminOnly, upload, uploadToCloudinary } = deps;
+  const { auth, adminOnly, upload, uploadToCloudinary, shopOnly } = deps;
 
   /**
    * POST /api/orders — place an order.
@@ -24,7 +59,7 @@ module.exports = function orderRoutes(app, deps) {
    * stock" instead of silently overselling.
    */
   app.post("/api/orders", auth, upload.single("prescription"), async (req, res) => {
-    const decremented = []; // track what we've already deducted, to roll back on failure
+    const decremented = []; // { pool: "central"|"shop", id, qty } — for rollback on failure
     try {
       let { items, address, longitude, latitude, contactPhone } = req.body;
       if (typeof items === "string") items = JSON.parse(items); // multipart sends items as a JSON string
@@ -33,32 +68,23 @@ module.exports = function orderRoutes(app, deps) {
         return res.status(400).json({ error: "Cart is empty" });
       }
       if (!contactPhone) return res.status(400).json({ error: "Contact phone is required" });
+      if (!longitude || !latitude) return res.status(400).json({ error: "Delivery location is required" });
 
+      // --- Pass 1: read-only. Get product info to build the order and
+      // price it — routing/stock decisions happen separately below, since
+      // we don't yet know whether this ships from a local shop or central
+      // stock, and that decision needs the medicine IDs + quantities first.
       const orderItems = [];
       let subtotal = 0;
       let needsPrescription = false;
+      const routingItems = []; // [{ medicineId, quantity }] for decideFulfillment
 
       for (const line of items) {
         const qty = Math.max(1, parseInt(line.quantity) || 1);
-        // Atomic: only succeeds if enough stock exists RIGHT NOW.
-        const medicine = await Medicine.findOneAndUpdate(
-          { _id: line.medicineId, stock: { $gte: qty }, isActive: true, isDiscontinued: false },
-          { $inc: { stock: -qty, salesCount: qty } },
-          { new: true }
-        );
-        if (!medicine) {
-          // Roll back everything we already decremented in this same order.
-          for (const d of decremented) {
-            await Medicine.updateOne({ _id: d.id }, { $inc: { stock: d.qty, salesCount: -d.qty } });
-          }
-          return res.status(409).json({ error: `Not enough stock for one of the items in your cart. Please review your cart.` });
-        }
-        decremented.push({ id: medicine._id, qty });
+        const medicine = await Medicine.findOne({ _id: line.medicineId, isActive: true, isDiscontinued: false });
+        if (!medicine) return res.status(400).json({ error: "One of the items in your cart is no longer available" });
 
         if (medicine.prescriptionRequired) needsPrescription = true;
-        // Charge whatever price is ACTUALLY in effect right now — a
-        // discount is only real if checkout honors it, not just the
-        // product page. Same calculation used everywhere else.
         const { effectivePrice } = priceInfo(medicine);
         const lineTotal = Math.round(effectivePrice * qty * 100) / 100;
         subtotal += lineTotal;
@@ -66,37 +92,174 @@ module.exports = function orderRoutes(app, deps) {
           medicine: medicine._id, brandName: medicine.brandName, strength: medicine.strength,
           quantity: qty, unitPrice: effectivePrice, lineTotal, prescriptionRequired: medicine.prescriptionRequired,
         });
+        routingItems.push({ medicineId: medicine._id, quantity: qty });
+      }
+
+      // --- Decide fulfillment ONCE, here, from real-time shop stock and
+      // the delivery coordinates. This is the only place that decision is
+      // made — the fee it returns is final and never recalculated later.
+      let routing = await decideFulfillment(Number(latitude), Number(longitude), routingItems);
+
+      // --- Pass 2: reserve the actual stock, from whichever pool routing
+      // chose. If a local reservation loses a race (another order took the
+      // last unit between the read and now), we don't fail the checkout —
+      // we gracefully fall back to central fulfillment instead.
+      async function reserveFromShop(shop) {
+        for (const item of routingItems) {
+          const stockDoc = await ShopStock.findOneAndUpdate(
+            { shop: shop._id, medicine: item.medicineId, stock: { $gte: item.quantity } },
+            { $inc: { stock: -item.quantity } },
+            { new: true }
+          );
+          if (!stockDoc) {
+            for (const d of decremented) {
+              if (d.pool === "shop") await ShopStock.updateOne({ shop: d.shopId, medicine: d.id }, { $inc: { stock: d.qty } });
+            }
+            decremented.length = 0;
+            return false;
+          }
+          decremented.push({ pool: "shop", id: item.medicineId, qty: item.quantity, shopId: shop._id });
+        }
+        return true;
+      }
+      async function reserveFromCentral() {
+        for (const item of routingItems) {
+          const medicine = await Medicine.findOneAndUpdate(
+            { _id: item.medicineId, stock: { $gte: item.quantity }, isActive: true, isDiscontinued: false },
+            { $inc: { stock: -item.quantity, salesCount: item.quantity } },
+            { new: true }
+          );
+          if (!medicine) {
+            for (const d of decremented) {
+              if (d.pool === "central") await Medicine.updateOne({ _id: d.id }, { $inc: { stock: d.qty, salesCount: -d.qty } });
+            }
+            decremented.length = 0;
+            return false;
+          }
+          decremented.push({ pool: "central", id: item.medicineId, qty: item.quantity });
+        }
+        return true;
+      }
+
+      if (routing.fulfillmentType === "local") {
+        const reserved = await reserveFromShop(routing.matchedShop);
+        if (!reserved) {
+          // The shop match didn't hold — fall back to central rather than
+          // fail the customer's checkout over a timing race.
+          const settings = await getSettings();
+          routing = {
+            fulfillmentType: "central",
+            isInsideDhaka: routing.isInsideDhaka,
+            deliveryFee: routing.isInsideDhaka ? settings.courierFeeInsideDhaka : settings.courierFeeOutsideDhaka,
+            matchedShop: null,
+          };
+        }
+      }
+      if (routing.fulfillmentType === "central") {
+        const reserved = await reserveFromCentral();
+        if (!reserved) {
+          return res.status(409).json({ error: "Not enough stock for one of the items in your cart. Please review your cart." });
+        }
       }
 
       let prescriptionUrl = null;
       if (needsPrescription) {
         if (!req.file) {
-          for (const d of decremented) await Medicine.updateOne({ _id: d.id }, { $inc: { stock: d.qty, salesCount: -d.qty } });
+          for (const d of decremented) {
+            if (d.pool === "shop") await ShopStock.updateOne({ shop: d.shopId, medicine: d.id }, { $inc: { stock: d.qty } });
+            else await Medicine.updateOne({ _id: d.id }, { $inc: { stock: d.qty, salesCount: -d.qty } });
+          }
           return res.status(400).json({ error: "A prescription photo is required for one or more items in your cart" });
         }
         prescriptionUrl = await uploadToCloudinary(req.file.buffer, "prescriptions");
       }
 
-      const deliveryFee = 0; // flat/free for now — real logic (distance-based) can replace this later
+      const pickupCode = routing.fulfillmentType === "local" ? generatePickupCode() : null;
+
       const order = await new Order({
         patient: req.user.id,
         items: orderItems,
-        subtotal, deliveryFee, total: subtotal + deliveryFee,
+        subtotal, deliveryFee: routing.deliveryFee, total: subtotal + routing.deliveryFee,
         address: address || null,
-        location: (longitude && latitude) ? { type: "Point", coordinates: [Number(longitude), Number(latitude)] } : undefined,
+        location: { type: "Point", coordinates: [Number(longitude), Number(latitude)] },
         contactPhone,
         prescriptionUrl,
+        fulfillmentType: routing.fulfillmentType,
+        isInsideDhaka: routing.isInsideDhaka,
+        matchedShop: routing.matchedShop ? routing.matchedShop._id : null,
+        pickupCode,
         statusHistory: [{ status: "pending", by: req.user.id }],
       }).save();
 
+      if (routing.fulfillmentType === "local") {
+        notifyNearbyRiders(req.app.get("io"), routing.matchedShop, order);
+      }
+
       res.status(201).json(order);
     } catch (err) {
-      // Best-effort rollback if something unexpected failed mid-way.
+      // Best-effort rollback if something unexpected failed mid-way —
+      // route back to whichever pool each item actually came from.
       for (const d of decremented) {
-        await Medicine.updateOne({ _id: d.id }, { $inc: { stock: d.qty, salesCount: -d.qty } }).catch(() => {});
+        if (d.pool === "shop") {
+          await ShopStock.updateOne({ shop: d.shopId, medicine: d.id }, { $inc: { stock: d.qty } }).catch(() => {});
+        } else {
+          await Medicine.updateOne({ _id: d.id }, { $inc: { stock: d.qty, salesCount: -d.qty } }).catch(() => {});
+        }
       }
       res.status(400).json({ error: err.message });
     }
+  });
+
+  // ============ SHOP: view and confirm pickups ============
+
+  /** GET /api/shop/orders — everything currently relevant to my shop. */
+  app.get("/api/shop/orders", auth, shopOnly, async (req, res) => {
+    try {
+      const shop = await Shop.findOne({ owner: req.user.id });
+      if (!shop) return res.status(404).json({ error: "No shop profile found for this account" });
+
+      const orders = await Order.find({
+        matchedShop: shop._id,
+        status: { $in: ["pending", "rider_assigned", "picked_up"] },
+      })
+        .populate("assignedRider", "name phone")
+        .sort({ createdAt: -1 });
+      res.json(orders);
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+
+  /**
+   * PATCH /api/shop/orders/:id/confirm-pickup — the shop verifies the
+   * rider's pickup code before releasing the medicine. This is a pure
+   * handoff confirmation — stock was already reserved at checkout, so
+   * this step never touches inventory, only the order's status.
+   */
+  app.patch("/api/shop/orders/:id/confirm-pickup", auth, shopOnly, async (req, res) => {
+    try {
+      const { pickupCode } = req.body;
+      const shop = await Shop.findOne({ owner: req.user.id });
+      if (!shop) return res.status(404).json({ error: "No shop profile found for this account" });
+
+      const order = await Order.findOne({ _id: req.params.id, matchedShop: shop._id });
+      if (!order) return res.status(404).json({ error: "Order not found for this shop" });
+      if (order.status !== "rider_assigned") {
+        return res.status(409).json({ error: "This order isn't awaiting pickup right now" });
+      }
+      if (!pickupCode || pickupCode !== order.pickupCode) {
+        return res.status(400).json({ error: "That pickup code doesn't match" });
+      }
+
+      order.status = "picked_up";
+      order.pickupVerifiedAt = new Date();
+      order.statusHistory.push({ status: "picked_up", by: req.user.id });
+      await order.save();
+
+      const io = req.app.get("io");
+      if (order.assignedRider) io.to(order.assignedRider.toString()).emit("pickupConfirmed", { orderId: order._id });
+      io.to(order.patient.toString()).emit("orderUpdated", order);
+
+      res.json(order);
+    } catch (err) { res.status(400).json({ error: err.message }); }
   });
 
   /** GET /api/orders — the logged-in patient's own order history. */

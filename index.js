@@ -26,6 +26,8 @@ const medicineRoutes = require("./medicineRoutes");
 const medicineAdminRoutes = require("./medicineAdminRoutes");
 const orderRoutes = require("./orderRoutes");
 const medicineImportRoutes = require("./medicineImportRoutes");
+const riderRoutes = require("./riderRoutes");
+const shopRiderRoutes = require("./shopRiderRoutes");
 const { sendPush } = require("./pushService");
 const { finalizeJobEarnings, isHelperRestricted, getSettings } = require("./commissionRoutes");
 const { isHelperClearedForService } = require("./eligibility");
@@ -93,6 +95,14 @@ function helperOnly(req, res, next) {
 }
 function adminOnly(req, res, next) {
   if (req.user.role !== "admin") return res.status(403).json({ error: "Admins only" });
+  next();
+}
+function shopOnly(req, res, next) {
+  if (req.user.role !== "shop") return res.status(403).json({ error: "Shop accounts only" });
+  next();
+}
+function riderOnly(req, res, next) {
+  if (req.user.role !== "rider") return res.status(403).json({ error: "Riders only" });
   next();
 }
 
@@ -809,7 +819,9 @@ reportsRoutes(app, { auth, adminOnly });
 // --- MEDICINE CATALOGUE: search, browse, product + generic pages ---
 medicineRoutes(app, { auth, adminOnly });
 medicineAdminRoutes(app, { auth, adminOnly, upload, uploadToCloudinary });
-orderRoutes(app, { auth, adminOnly, upload, uploadToCloudinary });
+orderRoutes(app, { auth, adminOnly, upload, uploadToCloudinary, shopOnly });
+riderRoutes(app, { auth, riderOnly, adminOnly });
+shopRiderRoutes(app, { auth, adminOnly, shopOnly, riderOnly, upload, uploadToCloudinary });
 medicineImportRoutes(app, { auth, adminOnly, upload });
 
 server.listen(PORT, "0.0.0.0", () => {
