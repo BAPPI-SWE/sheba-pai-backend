@@ -80,6 +80,17 @@ io.on("connection", (socket) => {
       });
     }
   });
+  // Same lightweight relay pattern for delivery riders — no DB write per
+  // tick, just forwarded straight to whoever's watching this order.
+  socket.on("riderLocationUpdate", (data) => {
+    if (data?.patientId) {
+      io.to(data.patientId).emit("riderLocation", {
+        orderId: data.orderId,
+        latitude: data.latitude,
+        longitude: data.longitude,
+      });
+    }
+  });
   socket.on("disconnect", () => {
     console.log("❌ A device disconnected:", socket.id);
   });
