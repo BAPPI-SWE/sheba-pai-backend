@@ -51,7 +51,7 @@ module.exports = function medicineRoutes(app, deps) {
       const contains = new RegExp(rx, "i");
 
       const baseFilter = { isActive: true, isDiscontinued: false };
-      const projection = "brandName brandNameBangla slug strength dosageForm mrp price sellUnit packSizeLabel prescriptionRequired stock isAvailable images";
+      const projection = "brandName brandNameBangla slug strength dosageForm mrp price sellUnit packSizeLabel prescriptionRequired stock isAvailable images discountPercent discountStartsAt discountEndsAt";
       const populate = [
         { path: "generic", select: "name nameBangla slug" },
         { path: "manufacturer", select: "name slug" },
@@ -161,7 +161,7 @@ module.exports = function medicineRoutes(app, deps) {
 
       const [medicines, total] = await Promise.all([
         Medicine.find(filter)
-          .select("brandName brandNameBangla slug strength dosageForm mrp price sellUnit packSizeLabel prescriptionRequired stock isAvailable images")
+          .select("brandName brandNameBangla slug strength dosageForm mrp price sellUnit packSizeLabel prescriptionRequired stock isAvailable images discountPercent discountStartsAt discountEndsAt")
           .populate("generic", "name nameBangla slug")
           .populate("manufacturer", "name slug")
           .sort(sort).skip((page - 1) * limit).limit(limit).lean(),
@@ -198,7 +198,7 @@ module.exports = function medicineRoutes(app, deps) {
         isActive: true,
         isDiscontinued: false,
       })
-        .select("brandName slug strength dosageForm price mrp sellUnit stock isAvailable")
+        .select("brandName slug strength dosageForm price mrp sellUnit stock isAvailable discountPercent discountStartsAt discountEndsAt")
         .populate("manufacturer", "name slug")
         .sort({ price: 1 })
         .limit(20)
@@ -226,7 +226,7 @@ module.exports = function medicineRoutes(app, deps) {
       const brands = await Medicine.find({
         generic: generic._id, isActive: true, isDiscontinued: false,
       })
-        .select("brandName brandNameBangla slug strength dosageForm price mrp sellUnit packSizeLabel stock isAvailable prescriptionRequired images")
+        .select("brandName brandNameBangla slug strength dosageForm price mrp sellUnit packSizeLabel stock isAvailable prescriptionRequired images discountPercent discountStartsAt discountEndsAt")
         .populate("manufacturer", "name slug")
         .sort({ price: 1 })
         .lean();
