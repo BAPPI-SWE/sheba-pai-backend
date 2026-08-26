@@ -58,6 +58,44 @@ module.exports = function orderRoutes(app, deps) {
    * both succeed on the last unit — one will correctly fail with "out of
    * stock" instead of silently overselling.
    */
+  /**
+   * POST /api/orders/quote — the real delivery fee, computed BEFORE the
+   * customer commits, using the exact same routing logic checkout itself
+   * uses. Pure read: never reserves stock or creates anything, so it's
+   * safe to call every time the delivery address changes.
+   */
+  app.post("/api/orders/quote", auth, async (req, res) => {
+    try {
+      let { items, longitude, latitude } = req.body;
+      if (typeof items === "string") items = JSON.parse(items);
+      if (!Array.isArray(items) || items.length === 0) {
+        return res.status(400).json({ error: "Cart is empty" });
+      }
+      if (longitude == null || latitude == null) {
+        return res.status(400).json({ error: "Delivery location is required" });
+      }
+
+      let subtotal = 0;
+      const routingItems = [];
+      for (const line of items) {
+        const qty = Math.max(1, parseInt(line.quantity) || 1);
+        const medicine = await Medicine.findOne({ _id: line.medicineId, isActive: true, isDiscontinued: false });
+        if (!medicine) continue; // quote skips unavailable items rather than failing the whole preview
+        const { effectivePrice } = priceInfo(medicine);
+        subtotal += Math.round(effectivePrice * qty * 100) / 100;
+        routingItems.push({ medicineId: medicine._id, quantity: qty });
+      }
+
+      const routing = await decideFulfillment(Number(latitude), Number(longitude), routingItems);
+      res.json({
+        subtotal,
+        deliveryFee: routing.deliveryFee,
+        total: subtotal + routing.deliveryFee,
+        fulfillmentType: routing.fulfillmentType,
+      });
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+
   app.post("/api/orders", auth, upload.single("prescription"), async (req, res) => {
     const decremented = []; // { pool: "central"|"shop", id, qty } — for rollback on failure
     try {
