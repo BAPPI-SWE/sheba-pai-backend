@@ -265,7 +265,10 @@ module.exports = function orderRoutes(app, deps) {
   /** GET /api/orders — the logged-in patient's own order history. */
   app.get("/api/orders", auth, async (req, res) => {
     try {
-      const orders = await Order.find({ patient: req.user.id }).sort({ createdAt: -1 }).limit(50);
+      const orders = await Order.find({ patient: req.user.id })
+        .select("-pickupCode")
+        .populate("matchedShop", "name")
+        .sort({ createdAt: -1 }).limit(50);
       res.json(orders);
     } catch (err) { res.status(400).json({ error: err.message }); }
   });
@@ -273,12 +276,18 @@ module.exports = function orderRoutes(app, deps) {
   /** GET /api/orders/:id — a single order (must belong to the requester, unless admin). */
   app.get("/api/orders/:id", auth, async (req, res) => {
     try {
-      const order = await Order.findById(req.params.id).populate("patient", "name phone");
+      const order = await Order.findById(req.params.id)
+        .populate("patient", "name phone")
+        .populate("matchedShop", "name address contactPhone location")
+        .populate("assignedRider", "name phone");
       if (!order) return res.status(404).json({ error: "Not found" });
       if (order.patient._id.toString() !== req.user.id && req.user.role !== "admin") {
         return res.status(403).json({ error: "Not your order" });
       }
-      res.json(order);
+      // The pickup code is a shop/rider handoff detail — the patient never needs it.
+      const obj = order.toObject();
+      delete obj.pickupCode;
+      res.json(obj);
     } catch (err) { res.status(400).json({ error: err.message }); }
   });
 
