@@ -190,6 +190,7 @@ module.exports = function orderRoutes(app, deps) {
             isInsideDhaka: routing.isInsideDhaka,
             deliveryFee: routing.isInsideDhaka ? settings.courierFeeInsideDhaka : settings.courierFeeOutsideDhaka,
             matchedShop: null,
+            routingNote: "A matching shop was found, but lost the stock to another order at the last moment.",
           };
         }
       }
@@ -226,6 +227,7 @@ module.exports = function orderRoutes(app, deps) {
         isInsideDhaka: routing.isInsideDhaka,
         matchedShop: routing.matchedShop ? routing.matchedShop._id : null,
         pickupCode,
+        routingNote: routing.routingNote || null,
         statusHistory: [{ status: "pending", by: req.user.id }],
       }).save();
 

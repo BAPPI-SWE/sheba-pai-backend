@@ -60,6 +60,11 @@ const orderSchema = new mongoose.Schema(
     // --- Fulfillment routing (decided once, at checkout, never changed) ---
     fulfillmentType: { type: String, enum: ["local", "central"], default: "central" },
     isInsideDhaka: { type: Boolean, default: true },
+    // Why this order didn't route to a local shop, if it didn't — e.g.
+    // "no approved shop within 5km" vs "shops nearby but none had full
+    // stock." Null for local orders. This is what makes "why did this go
+    // to admin instead of a rider?" answerable by looking at the order.
+    routingNote: { type: String, default: null },
 
     // --- Local-shop-and-rider fulfillment ---
     matchedShop: { type: mongoose.Schema.Types.ObjectId, ref: "Shop", default: null },

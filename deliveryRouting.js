@@ -44,6 +44,17 @@ async function isInsideDhaka(latitude, longitude) {
  * items: [{ medicineId, quantity }]
  * Returns the matching Shop document, or null.
  */
+/**
+ * Find the single nearest APPROVED, OPEN shop within radius whose stock
+ * fully covers every line item in the cart (v1 rule: one shop must cover
+ * the whole order, or it doesn't count as a local match — see the design
+ * discussion this was built from).
+ *
+ * items: [{ medicineId, quantity }]
+ * Returns { shop, reason } — shop is null if no match, and `reason`
+ * explains exactly why, so a "why didn't this route locally?" question
+ * is answerable by looking at the order instead of guessing.
+ */
 async function findFullyCoveringShop(latitude, longitude, items) {
   const settings = await getSettings();
 
@@ -58,6 +69,10 @@ async function findFullyCoveringShop(latitude, longitude, items) {
     },
   });
 
+  if (candidateShops.length === 0) {
+    return { shop: null, reason: `No approved, open shop within ${settings.shopMatchRadiusKm}km of the delivery address.` };
+  }
+
   for (const shop of candidateShops) {
     const stocks = await ShopStock.find({
       shop: shop._id,
@@ -71,9 +86,13 @@ async function findFullyCoveringShop(latitude, longitude, items) {
       return available >= item.quantity;
     });
 
-    if (fullyCovered) return shop; // $near already sorts nearest-first, so the first full match wins
+    if (fullyCovered) return { shop, reason: null }; // $near already sorts nearest-first, so the first full match wins
   }
-  return null;
+
+  return {
+    shop: null,
+    reason: `${candidateShops.length} shop(s) found within ${settings.shopMatchRadiusKm}km, but none had every ordered item in stock (v1 requires one shop to fully cover the order).`,
+  };
 }
 
 /**
@@ -83,7 +102,7 @@ async function findFullyCoveringShop(latitude, longitude, items) {
 async function decideFulfillment(latitude, longitude, items) {
   const settings = await getSettings();
   const insideDhaka = await isInsideDhaka(latitude, longitude);
-  const matchedShop = await findFullyCoveringShop(latitude, longitude, items);
+  const { shop: matchedShop, reason } = await findFullyCoveringShop(latitude, longitude, items);
 
   if (matchedShop) {
     return {
@@ -91,6 +110,7 @@ async function decideFulfillment(latitude, longitude, items) {
       isInsideDhaka: insideDhaka,
       deliveryFee: settings.localDeliveryFee,
       matchedShop,
+      routingNote: null,
     };
   }
 
@@ -99,6 +119,7 @@ async function decideFulfillment(latitude, longitude, items) {
     isInsideDhaka: insideDhaka,
     deliveryFee: insideDhaka ? settings.courierFeeInsideDhaka : settings.courierFeeOutsideDhaka,
     matchedShop: null,
+    routingNote: reason, // why this didn't route locally — surfaced in admin
   };
 }
 
