@@ -54,6 +54,16 @@ const serviceSchema = new mongoose.Schema(
     // Platform commission taken from the helper's earnings on this service.
     commissionPercent: { type: Number, default: 0, min: 0, max: 100 },
 
+    // "instant"  -> normal flow: browse caregivers, see prices, request directly.
+    // "quote"    -> no price is shown at all. The app shows a "Call for
+    //               price" button that opens WhatsApp instead of a booking
+    //               flow. The actual price/caregiver/commission for each
+    //               case is then set manually by an admin after the
+    //               conversation, via the manual-booking endpoint — this
+    //               is deliberately for services too varied or negotiated
+    //               to price upfront (long-term packages, complex cases).
+    bookingMode: { type: String, enum: ["instant", "quote"], default: "instant" },
+
     description: { type: String, default: null },
     isActive: { type: Boolean, default: true },
     sortOrder: { type: Number, default: 0 },

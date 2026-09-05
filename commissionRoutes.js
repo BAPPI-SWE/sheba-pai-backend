@@ -30,6 +30,17 @@ async function getSettings() {
  * with a due date based on the grace period.
  */
 async function finalizeJobEarnings(request) {
+  // Manually-booked (call-for-price) jobs already have their price and
+  // commission set — by the admin, at creation, after a WhatsApp/phone
+  // negotiation. There's no HelperService listing to look up (the whole
+  // point is this job isn't in the normal price catalog), so the usual
+  // computation would find nothing and silently skip crediting the
+  // caregiver at all. Credit exactly what was already agreed instead.
+  if (request.bookingSource === "manual" && request.finalAmount != null) {
+    await creditHelperEarnings(request.helper, request.finalAmount, request.commissionAmount || 0);
+    return;
+  }
+
   const offering = await HelperService.findOne({ helper: request.helper, service: request.subService });
   const service = request.subService ? await Service.findById(request.subService) : null;
   if (!offering || !service) return; // legacy/broadcast request with no priced sub-service — skip
@@ -52,10 +63,15 @@ async function finalizeJobEarnings(request) {
   request.commissionPercentApplied = percent;
   await request.save();
 
+  await creditHelperEarnings(request.helper, finalAmount, commissionAmount);
+}
+
+/** Shared by both the normal and manual-booking paths — the actual payout bookkeeping. */
+async function creditHelperEarnings(helperId, finalAmount, commissionAmount) {
   if (commissionAmount > 0) {
     const settings = await getSettings();
     const dueDate = new Date(Date.now() + settings.commissionGraceDays * 86400000);
-    const profile = await HelperProfile.findOne({ user: request.helper });
+    const profile = await HelperProfile.findOne({ user: helperId });
     if (profile) {
       profile.totalEarned = (profile.totalEarned || 0) + finalAmount;
       profile.commissionBalance = (profile.commissionBalance || 0) + commissionAmount;
@@ -66,6 +82,13 @@ async function finalizeJobEarnings(request) {
       if (profile.commissionBalance > 0 && !profile.oldestUnpaidDueDate) {
         profile.oldestUnpaidDueDate = dueDate;
       }
+      await profile.save();
+    }
+  } else {
+    // Even a zero-commission manual job should still count toward totalEarned.
+    const profile = await HelperProfile.findOne({ user: helperId });
+    if (profile) {
+      profile.totalEarned = (profile.totalEarned || 0) + finalAmount;
       await profile.save();
     }
   }

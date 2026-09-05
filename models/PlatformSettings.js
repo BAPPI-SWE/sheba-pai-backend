@@ -42,6 +42,10 @@ const platformSettingsSchema = new mongoose.Schema({
   dhakaCenterLat: { type: Number, default: 23.7104 },
   dhakaCenterLng: { type: Number, default: 90.4074 },
   dhakaRadiusKm: { type: Number, default: 25, min: 1 },
+
+  // The WhatsApp number "Call for price" buttons open a chat to. Kept as a
+  // setting, not hardcoded, so it can change without an app update.
+  supportWhatsAppNumber: { type: String, default: null },
 });
 
 module.exports = mongoose.model("PlatformSettings", platformSettingsSchema);

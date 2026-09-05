@@ -26,6 +26,7 @@ const medicineRoutes = require("./medicineRoutes");
 const medicineAdminRoutes = require("./medicineAdminRoutes");
 const orderRoutes = require("./orderRoutes");
 const medicineImportRoutes = require("./medicineImportRoutes");
+const manualBookingRoutes = require("./manualBookingRoutes");
 const riderRoutes = require("./riderRoutes");
 const shopRiderRoutes = require("./shopRiderRoutes");
 const { sendPush } = require("./pushService");
@@ -469,10 +470,20 @@ app.get("/api/helper/requests", auth, helperOnly, async (req, res) => {
 
     // Gate: hide requests whose sub-service this helper isn't cleared for.
     // (Identity is checked inside isHelperClearedForService too.)
+    //
+    // Manually-created (admin, after a WhatsApp/phone chat) requests skip
+    // the granular per-service document check — an admin personally
+    // choosing this caregiver for this case IS the vetting. Requiring them
+    // to also separately satisfy automated per-service document rules
+    // (designed for the unsupervised self-serve flow) would just make an
+    // admin's own explicit choice silently invisible to the person they
+    // picked. Identity approval is still required either way.
     const visible = [];
     for (const r of requests) {
       let allowed = false;
-      if (r.subService) {
+      if (r.bookingSource === "manual") {
+        allowed = profile.verificationStatus === "approved";
+      } else if (r.subService) {
         const clearance = await isHelperClearedForService(req.user.id, r.subService);
         allowed = clearance.cleared;
       } else {
@@ -630,9 +641,16 @@ app.post("/api/requests", auth, async (req, res) => {
 app.patch("/api/requests/:id/accept", auth, helperOnly, async (req, res) => {
   try {
     // Safety gate: identity approved AND service requirements approved.
+    // Manually-created requests only require approved identity — see the
+    // matching comment in GET /api/helper/requests for why.
     const reqDoc = await Request.findById(req.params.id);
     if (!reqDoc) return res.status(404).json({ error: "Request not found" });
-    if (reqDoc.subService) {
+    if (reqDoc.bookingSource === "manual") {
+      const profile = await HelperProfile.findOne({ user: req.user.id });
+      if (!profile || profile.verificationStatus !== "approved") {
+        return res.status(403).json({ error: "Your account is not verified yet" });
+      }
+    } else if (reqDoc.subService) {
       const clearance = await isHelperClearedForService(req.user.id, reqDoc.subService);
       if (!clearance.cleared) {
         return res.status(403).json({ error: "You are not verified for this service yet", reason: clearance.reason });
@@ -834,6 +852,7 @@ orderRoutes(app, { auth, adminOnly, upload, uploadToCloudinary, shopOnly });
 riderRoutes(app, { auth, riderOnly, adminOnly });
 shopRiderRoutes(app, { auth, adminOnly, shopOnly, riderOnly, upload, uploadToCloudinary });
 medicineImportRoutes(app, { auth, adminOnly, upload });
+manualBookingRoutes(app, { auth, adminOnly });
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running at http://localhost:${PORT}`);

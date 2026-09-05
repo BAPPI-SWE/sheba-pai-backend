@@ -73,6 +73,13 @@ const requestSchema = new mongoose.Schema(
     finalAmount: { type: Number, default: null },     // computed at completion
     commissionAmount: { type: Number, default: null }, // platform's cut of finalAmount
     commissionPercentApplied: { type: Number, default: null },
+    // "app"    -> created through the normal browse-and-choose flow.
+    // "manual" -> created by an admin after a "call for price" conversation
+    //             (WhatsApp/phone). Price and commission are set once, at
+    //             creation, not recomputed at completion — see
+    //             finalizeJobEarnings for why this matters.
+    bookingSource: { type: String, enum: ["app", "manual"], default: "app" },
+
     location: {
       type: {
         type: String,
@@ -81,7 +88,10 @@ const requestSchema = new mongoose.Schema(
       coordinates: {
         type: [Number],
         default: undefined, // see RiderProfile.js for why this line matters
-        required: true,
+        // Not required: a manually-booked (WhatsApp/phone) request has no
+        // app-based location share. Every app-created request still always
+        // supplies real coordinates in code — this only relaxes the
+        // schema-level constraint for the one path that genuinely can't.
       },
     },
   },
