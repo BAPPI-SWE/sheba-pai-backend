@@ -451,11 +451,13 @@ app.get("/api/helper/requests", auth, helperOnly, async (req, res) => {
     const profile = await HelperProfile.findOne({ user: req.user.id });
     if (!profile) return res.status(404).json({ error: "Create a helper profile first" });
     const helperId = req.user.id;
-    // Requests still searching that are either:
-    //   - targeted specifically at this helper, OR
-    //   - broadcast (no targetedHelpers) matching this helper's roles
-    const requests = await Request.find({
+
+    // Normal requests still searching — targeted at this helper, or a
+    // broadcast matching their roles — filtered to nearby ones, exactly
+    // as before.
+    const nearbyRequests = await Request.find({
       status: "searching",
+      bookingSource: { $ne: "manual" },
       $or: [
         { targetedHelpers: helperId },
         { targetedHelpers: { $size: 0 }, role: { $in: profile.roles } },
@@ -467,6 +469,22 @@ app.get("/api/helper/requests", auth, helperOnly, async (req, res) => {
         },
       },
     }).populate("patient", "name");
+
+    // Manually-created (admin, after a call-for-price conversation)
+    // requests targeted at this helper — NOT distance-filtered. An admin
+    // already personally chose this caregiver for this specific case;
+    // the automatic 20km radius exists to protect the unsupervised
+    // self-serve flow and has no business silently overriding that.
+    // Without this split, a manual booking could notify the caregiver
+    // (that push has no distance check) while never actually appearing
+    // in their list to accept — exactly the bug this fixes.
+    const manualRequests = await Request.find({
+      status: "searching",
+      bookingSource: "manual",
+      targetedHelpers: helperId,
+    }).populate("patient", "name");
+
+    const requests = [...manualRequests, ...nearbyRequests];
 
     // Gate: hide requests whose sub-service this helper isn't cleared for.
     // (Identity is checked inside isHelperClearedForService too.)
