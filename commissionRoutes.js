@@ -191,7 +191,7 @@ module.exports = function commissionRoutes(app, deps) {
   });
   app.patch("/api/admin/settings", auth, adminOnly, async (req, res) => {
     try {
-      const { commissionGraceDays, maxConcurrentJobs, searchRadiusKm, browsePageSize } = req.body;
+      const { commissionGraceDays, maxConcurrentJobs, searchRadiusKm, browsePageSize, supportWhatsAppNumber, emergencyContactNumber } = req.body;
       const settings = await getSettings();
 
       // Each is clamped to a sane range so a typo can't break the platform.
@@ -207,9 +207,33 @@ module.exports = function commissionRoutes(app, deps) {
       if (browsePageSize !== undefined) {
         settings.browsePageSize = Math.min(50, Math.max(3, Number(browsePageSize) || 10));
       }
+      if (supportWhatsAppNumber !== undefined) {
+        settings.supportWhatsAppNumber = supportWhatsAppNumber || null;
+      }
+      if (emergencyContactNumber !== undefined) {
+        settings.emergencyContactNumber = emergencyContactNumber || null;
+      }
 
       await settings.save();
       res.json(settings);
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  /**
+   * GET /api/settings/public — the small subset of settings the APP needs
+   * and is safe to expose without a login (currently just the WhatsApp
+   * number "Call for price" buttons open). Deliberately not the full
+   * settings object — radius/fee/grace-period numbers stay admin-only.
+   */
+  app.get("/api/settings/public", async (req, res) => {
+    try {
+      const settings = await getSettings();
+      res.json({
+        supportWhatsAppNumber: settings.supportWhatsAppNumber || null,
+        emergencyContactNumber: settings.emergencyContactNumber || null,
+      });
     } catch (err) {
       res.status(400).json({ error: err.message });
     }

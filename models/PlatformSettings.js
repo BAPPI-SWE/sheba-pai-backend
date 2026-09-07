@@ -46,6 +46,12 @@ const platformSettingsSchema = new mongoose.Schema({
   // The WhatsApp number "Call for price" buttons open a chat to. Kept as a
   // setting, not hardcoded, so it can change without an app update.
   supportWhatsAppNumber: { type: String, default: null },
+
+  // The number the app's emergency "Call Now" button dials — your own
+  // dispatch/support line, not hardcoded, same reasoning as the WhatsApp
+  // number: it can change without an app update, and it's a serious
+  // enough thing to never bake into client code.
+  emergencyContactNumber: { type: String, default: null },
 });
 
 module.exports = mongoose.model("PlatformSettings", platformSettingsSchema);
