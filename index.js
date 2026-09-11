@@ -11,6 +11,7 @@ const cloudinary = require("./cloudinary");
 
 const Service = require("./models/Service");
 const User = require("./models/User");
+const OtpVerification = require("./models/OtpVerification");
 const HelperProfile = require("./models/HelperProfile");
 const Request = require("./models/Request");
 const Role = require("./models/Role");
@@ -27,6 +28,7 @@ const medicineAdminRoutes = require("./medicineAdminRoutes");
 const orderRoutes = require("./orderRoutes");
 const medicineImportRoutes = require("./medicineImportRoutes");
 const manualBookingRoutes = require("./manualBookingRoutes");
+const otpRoutes = require("./otpRoutes");
 const riderRoutes = require("./riderRoutes");
 const shopRiderRoutes = require("./shopRiderRoutes");
 const { sendPush } = require("./pushService");
@@ -205,10 +207,31 @@ app.post("/api/auth/signup", async (req, res) => {
     if (!["patient", "helper", "shop", "rider"].includes(role)) {
       return res.status(400).json({ error: "Invalid role" });
     }
+
+    // Check uniqueness FIRST, before OTP — no point verifying (or telling
+    // someone to verify) a phone that's already taken. This ordering also
+    // matters for the app's own pre-check flow: a signup screen probes
+    // this same endpoint before sending the user to the OTP screen, and
+    // needs a real "already registered" error, not a generic "verify
+    // first" that would mask it.
     const existing = await User.findOne({ phone });
     if (existing) return res.status(409).json({ error: "Phone already registered" });
+
+    // A phone must have a recent, successful OTP verification before an
+    // account can be created here — otherwise anyone could sign up with
+    // any phone number, real or not, which is exactly the trust gap OTP
+    // exists to close. "Recent" is deliberately more generous than the
+    // OTP's own 5-minute validity window, since some time naturally
+    // passes between verifying and finishing the rest of the form.
+    const otpRecord = await OtpVerification.findOne({ phone });
+    const OTP_TRUST_WINDOW_MS = 15 * 60 * 1000;
+    if (!otpRecord || !otpRecord.verified || Date.now() - otpRecord.verifiedAt.getTime() > OTP_TRUST_WINDOW_MS) {
+      return res.status(403).json({ error: "Please verify your phone number first" });
+    }
+
     const hashedPassword = await bcrypt.hash(password, 10);
     const savedUser = await new User({ name, phone, password: hashedPassword, role }).save();
+    await OtpVerification.deleteOne({ phone }); // consumed — can't be reused for a second signup
     res.status(201).json({
       id: savedUser._id, name: savedUser.name, phone: savedUser.phone, role: savedUser.role,
     });
@@ -871,6 +894,7 @@ riderRoutes(app, { auth, riderOnly, adminOnly });
 shopRiderRoutes(app, { auth, adminOnly, shopOnly, riderOnly, upload, uploadToCloudinary });
 medicineImportRoutes(app, { auth, adminOnly, upload });
 manualBookingRoutes(app, { auth, adminOnly });
+otpRoutes(app);
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running at http://localhost:${PORT}`);
