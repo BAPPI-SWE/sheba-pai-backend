@@ -134,6 +134,41 @@ module.exports = function medicineAdminRoutes(app, deps) {
     } catch (err) { res.status(400).json({ error: err.message }); }
   });
 
+  /**
+   * One-click starter set of consumer shopping categories — organized by
+   * what a patient is dealing with ("Gastric", "Diabetes"), not by drug
+   * class. Only creates the ones that don't exist yet, so it's safe to
+   * click again later.
+   */
+  const DEFAULT_CATEGORIES = [
+    ["Fever & Pain", "জ্বর ও ব্যথা", "thermometer", "accent", true],
+    ["Gastric & Digestion", "গ্যাস্ট্রিক ও হজম", "nutrition", "warning", true],
+    ["Cold, Cough & Allergy", "সর্দি, কাশি ও এলার্জি", "leaf", "primary", true],
+    ["Diabetic Care", "ডায়াবেটিক কেয়ার", "water", "helper", true],
+    ["Heart & Blood Pressure", "হার্ট ও প্রেশার", "heart", "accent", true],
+    ["Antibiotics", "অ্যান্টিবায়োটিক", "medkit", "helper", true],
+    ["Vitamins & Supplements", "ভিটামিন ও সাপ্লিমেন্ট", "fitness", "success", true],
+    ["Skin Care", "ত্বকের যত্ন", "sparkles", "accent", true],
+    ["Baby & Mom", "মা ও শিশু", "happy", "primary", false],
+    ["Women's Health", "নারী স্বাস্থ্য", "female", "accent", false],
+    ["Eye & Ear Care", "চোখ ও কানের যত্ন", "eye", "primary", false],
+    ["First Aid", "প্রাথমিক চিকিৎসা", "bandage", "warning", false],
+  ];
+  app.post("/api/admin/categories/seed-defaults", auth, adminOnly, async (req, res) => {
+    try {
+      let created = 0;
+      for (let i = 0; i < DEFAULT_CATEGORIES.length; i++) {
+        const [name, nameBangla, icon, tone, isFeatured] = DEFAULT_CATEGORIES[i];
+        const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        if (await Category.exists({ name: new RegExp(`^${escaped}$`, "i") })) continue;
+        const slug = await uniqueSlug(Category, name);
+        await new Category({ name, nameBangla, slug, icon, tone, isFeatured, sortOrder: (i + 1) * 10 }).save();
+        created++;
+      }
+      res.json({ created, skipped: DEFAULT_CATEGORIES.length - created });
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+
   // ============ GENERICS (the clinical content) ============
   app.get("/api/admin/generics", auth, adminOnly, async (req, res) => {
     try {
