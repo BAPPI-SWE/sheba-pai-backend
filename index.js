@@ -30,7 +30,8 @@ const medicineImportRoutes = require("./medicineImportRoutes");
 const manualBookingRoutes = require("./manualBookingRoutes");
 const otpRoutes = require("./otpRoutes");
 const bannerRoutes = require("./bannerRoutes");
-const speechRoutes = require("./speechRoutes");
+const doctorRoutes = require("./doctorRoutes");
+const doctorAdminRoutes = require("./doctorAdminRoutes");
 const riderRoutes = require("./riderRoutes");
 const shopRiderRoutes = require("./shopRiderRoutes");
 const { sendPush } = require("./pushService");
@@ -898,7 +899,9 @@ medicineImportRoutes(app, { auth, adminOnly, upload });
 manualBookingRoutes(app, { auth, adminOnly });
 otpRoutes(app);
 bannerRoutes(app, { auth, adminOnly, upload, uploadToCloudinary });
-speechRoutes(app, { auth, upload });
+// --- DOCTOR DIRECTORY: specialties, doctors by district, Excel import ---
+doctorRoutes(app, { auth });
+doctorAdminRoutes(app, { auth, adminOnly, upload, uploadToCloudinary });
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running at http://localhost:${PORT}`);
