@@ -11,6 +11,8 @@ const Generic = require("./models/Generic");
 const Manufacturer = require("./models/Manufacturer");
 const DrugClass = require("./models/DrugClass");
 const Category = require("./models/Category");
+const Order = require("./models/Order");
+const ShopStock = require("./models/ShopStock");
 const { withPricing } = require("./pricing");
 
 function slugify(str) {
@@ -213,6 +215,8 @@ module.exports = function medicineAdminRoutes(app, deps) {
       const filter = {};
       if (req.query.q) filter.brandName = new RegExp(req.query.q, "i");
       if (req.query.lowStock === "true") filter.$expr = { $lte: ["$stock", "$lowStockThreshold"] };
+      if (req.query.status === "active") filter.isDiscontinued = { $ne: true };
+      if (req.query.status === "discontinued") filter.isDiscontinued = true;
 
       const [medicines, total] = await Promise.all([
         Medicine.find(filter)
@@ -303,9 +307,36 @@ module.exports = function medicineAdminRoutes(app, deps) {
     } catch (err) { res.status(400).json({ error: err.message }); }
   });
 
+  /** Hide from / restore to the store, without deleting anything. */
+  app.patch("/api/admin/medicines/:id/discontinue", auth, adminOnly, async (req, res) => {
+    try {
+      const discontinued = req.body.discontinued !== false;
+      const updated = await Medicine.findByIdAndUpdate(
+        req.params.id, { isDiscontinued: discontinued, isActive: !discontinued }, { new: true }
+      );
+      if (!updated) return res.status(404).json({ error: "Medicine not found" });
+      res.json({ ok: true, isDiscontinued: updated.isDiscontinued });
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+
+  /**
+   * PERMANENT delete. Refused when any order contains this medicine, so
+   * order history always has something to point to — for those, the
+   * admin is told to discontinue (hide) it instead. Shops' stock rows for
+   * the medicine are removed with it.
+   */
   app.delete("/api/admin/medicines/:id", auth, adminOnly, async (req, res) => {
     try {
-      await Medicine.findByIdAndUpdate(req.params.id, { isActive: false, isDiscontinued: true });
+      const orderCount = await Order.countDocuments({ "items.medicine": req.params.id });
+      if (orderCount > 0) {
+        return res.status(409).json({
+          error: `This medicine is in ${orderCount} order(s), so it can't be deleted permanently. Use "Hide from store" instead.`,
+          orderCount,
+        });
+      }
+      const deleted = await Medicine.findByIdAndDelete(req.params.id);
+      if (!deleted) return res.status(404).json({ error: "Medicine not found" });
+      await ShopStock.deleteMany({ medicine: req.params.id });
       res.json({ ok: true });
     } catch (err) { res.status(400).json({ error: err.message }); }
   });
