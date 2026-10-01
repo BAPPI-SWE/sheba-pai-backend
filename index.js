@@ -32,6 +32,7 @@ const otpRoutes = require("./otpRoutes");
 const bannerRoutes = require("./bannerRoutes");
 const doctorRoutes = require("./doctorRoutes");
 const doctorAdminRoutes = require("./doctorAdminRoutes");
+const accountRoutes = require("./accountRoutes");
 const riderRoutes = require("./riderRoutes");
 const shopRiderRoutes = require("./shopRiderRoutes");
 const { sendPush } = require("./pushService");
@@ -195,6 +196,19 @@ app.delete("/api/roles/:id", auth, adminOnly, async (req, res) => {
 });
 
 // --- AUTH ---
+// Phone verification switch. Default OFF (paused). To turn it on later, set
+// OTP_REQUIRED=true AND SMS_API_KEY in the server environment.
+const OTP_REQUIRED = process.env.OTP_REQUIRED === "true";
+if (OTP_REQUIRED && !process.env.SMS_API_KEY) {
+  console.warn("⚠️  OTP_REQUIRED=true but SMS_API_KEY is not set — nobody will receive a code and signups will fail.");
+}
+if (!OTP_REQUIRED) console.log("ℹ️  Phone OTP is PAUSED (OTP_REQUIRED is not 'true'). Signups need no code.");
+
+/** The app asks this before signup, so it knows whether to show the code screen. */
+app.get("/api/auth/config", (req, res) => {
+  res.json({ otpRequired: OTP_REQUIRED });
+});
+
 app.post("/api/auth/signup", async (req, res) => {
   try {
     const { name, phone, password, role } = req.body;
@@ -226,15 +240,22 @@ app.post("/api/auth/signup", async (req, res) => {
     // exists to close. "Recent" is deliberately more generous than the
     // OTP's own 5-minute validity window, since some time naturally
     // passes between verifying and finishing the rest of the form.
-    const otpRecord = await OtpVerification.findOne({ phone });
-    const OTP_TRUST_WINDOW_MS = 15 * 60 * 1000;
-    if (!otpRecord || !otpRecord.verified || Date.now() - otpRecord.verifiedAt.getTime() > OTP_TRUST_WINDOW_MS) {
-      return res.status(403).json({ error: "Please verify your phone number first" });
+    // OTP is a SWITCH, not a hard requirement: it stays OFF until the
+    // server has OTP_REQUIRED=true (and an SMS provider key). That lets
+    // the app run — and be closed-tested — before an SMS provider exists,
+    // and later be turned on with a setting change, no redeploy of code.
+    // The gate sits in this shared endpoint, so it covers every role.
+    if (OTP_REQUIRED) {
+      const otpRecord = await OtpVerification.findOne({ phone });
+      const OTP_TRUST_WINDOW_MS = 15 * 60 * 1000;
+      if (!otpRecord || !otpRecord.verified || Date.now() - otpRecord.verifiedAt.getTime() > OTP_TRUST_WINDOW_MS) {
+        return res.status(403).json({ error: "Please verify your phone number first" });
+      }
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
     const savedUser = await new User({ name, phone, password: hashedPassword, role }).save();
-    await OtpVerification.deleteOne({ phone }); // consumed — can't be reused for a second signup
+    if (OTP_REQUIRED) await OtpVerification.deleteOne({ phone }); // consumed — can't be reused for a second signup
     res.status(201).json({
       id: savedUser._id, name: savedUser.name, phone: savedUser.phone, role: savedUser.role,
     });
@@ -902,6 +923,7 @@ bannerRoutes(app, { auth, adminOnly, upload, uploadToCloudinary });
 // --- DOCTOR DIRECTORY: specialties, doctors by district, Excel import ---
 doctorRoutes(app, { auth });
 doctorAdminRoutes(app, { auth, adminOnly, upload, uploadToCloudinary });
+accountRoutes(app, { auth, cloudinary });
 
 server.listen(PORT, "0.0.0.0", () => {
   console.log(`Server running at http://localhost:${PORT}`);

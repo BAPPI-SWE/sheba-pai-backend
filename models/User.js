@@ -22,6 +22,11 @@ const userSchema = new mongoose.Schema(
 
     // Expo push token for this user's device (null when logged out)
     pushToken: { type: String, default: null },
+    // Account deletion anonymizes the record instead of removing it, so past
+    // orders / jobs / payments keep a valid reference (they just point at
+    // "Deleted user"). See accountRoutes.js.
+    isDeleted: { type: Boolean, default: false },
+    deletedAt: { type: Date, default: null },
 
     // Saved addresses (patient convenience: Home, Hospital, etc.)
     savedAddresses: [

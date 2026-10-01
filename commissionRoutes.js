@@ -191,8 +191,17 @@ module.exports = function commissionRoutes(app, deps) {
   });
   app.patch("/api/admin/settings", auth, adminOnly, async (req, res) => {
     try {
-      const { commissionGraceDays, maxConcurrentJobs, searchRadiusKm, browsePageSize, supportWhatsAppNumber, emergencyContactNumber } = req.body;
+      const { commissionGraceDays, maxConcurrentJobs, searchRadiusKm, browsePageSize, supportWhatsAppNumber, emergencyContactNumber, privacyPolicyUrl, termsUrl, accountDeletionUrl } = req.body;
       const settings = await getSettings();
+
+      // Links must be real web addresses — a typo here would put a dead link
+      // inside the app, which is exactly what a Play reviewer clicks first.
+      const cleanUrl = (v) => {
+        const s = String(v || "").trim();
+        if (!s) return null;
+        if (!/^https?:\/\/[^\s]+\.[^\s]+$/i.test(s)) throw new Error(`"${s}" is not a valid web address (it must start with https://)`);
+        return s;
+      };
 
       // Each is clamped to a sane range so a typo can't break the platform.
       if (commissionGraceDays !== undefined) {
@@ -213,6 +222,9 @@ module.exports = function commissionRoutes(app, deps) {
       if (emergencyContactNumber !== undefined) {
         settings.emergencyContactNumber = emergencyContactNumber || null;
       }
+      if (privacyPolicyUrl !== undefined) settings.privacyPolicyUrl = cleanUrl(privacyPolicyUrl);
+      if (termsUrl !== undefined) settings.termsUrl = cleanUrl(termsUrl);
+      if (accountDeletionUrl !== undefined) settings.accountDeletionUrl = cleanUrl(accountDeletionUrl);
 
       await settings.save();
       res.json(settings);
@@ -233,6 +245,9 @@ module.exports = function commissionRoutes(app, deps) {
       res.json({
         supportWhatsAppNumber: settings.supportWhatsAppNumber || null,
         emergencyContactNumber: settings.emergencyContactNumber || null,
+        privacyPolicyUrl: settings.privacyPolicyUrl || null,
+        termsUrl: settings.termsUrl || null,
+        accountDeletionUrl: settings.accountDeletionUrl || null,
       });
     } catch (err) {
       res.status(400).json({ error: err.message });

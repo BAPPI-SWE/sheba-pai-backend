@@ -52,6 +52,14 @@ const platformSettingsSchema = new mongoose.Schema({
   // number: it can change without an app update, and it's a serious
   // enough thing to never bake into client code.
   emergencyContactNumber: { type: String, default: null },
+
+  // Public web pages the app links to. Google Play requires a privacy policy
+  // link (inside the app AND in the Play listing) and a web page explaining
+  // how to delete an account. Kept as settings so they can be set / changed
+  // without releasing a new app version.
+  privacyPolicyUrl: { type: String, default: null },
+  termsUrl: { type: String, default: null },
+  accountDeletionUrl: { type: String, default: null },
 });
 
 module.exports = mongoose.model("PlatformSettings", platformSettingsSchema);
