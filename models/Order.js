@@ -42,6 +42,17 @@ const orderSchema = new mongoose.Schema(
     },
     contactPhone: { type: String, required: true },
 
+    // Filled when the order was taken through the order FORM (see
+    // PlatformSettings.orderMode) instead of GPS. Couriers route on thana +
+    // district, so those are stored separately, not just inside `address`.
+    orderMode: { type: String, enum: ["form", "smart"], default: "smart" },
+    recipientName: { type: String, default: null },
+    district: { type: String, default: null },
+    thana: { type: String, default: null },
+    addressLine: { type: String, default: null }, // house / road / village, as typed
+    deliveryZone: { type: String, enum: ["inside", "outside", null], default: null },
+    deliveryNote: { type: String, default: null },
+
     paymentMethod: { type: String, enum: ["cod"], default: "cod" }, // more methods later
     prescriptionUrl: { type: String, default: null }, // required if any item needs Rx
 

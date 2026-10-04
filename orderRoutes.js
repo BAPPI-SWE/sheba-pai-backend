@@ -13,6 +13,7 @@ const Shop = require("./models/Shop");
 const RiderProfile = require("./models/RiderProfile");
 const { priceInfo } = require("./pricing");
 const { decideFulfillment, generatePickupCode, getSettings } = require("./deliveryRouting");
+const { resolveDistrict } = require("./bdGeo");
 const { sendPush } = require("./pushService");
 
 /** Notify online, approved riders near the matched shop about a new job. */
@@ -45,6 +46,39 @@ async function notifyNearbyRiders(io, shop, order) {
   }
 }
 
+/** Accepts 01XXXXXXXXX, +8801XXXXXXXXX and 8801XXXXXXXXX; returns the 11-digit form or null. */
+function normalizeBdMobile(raw) {
+  let d = String(raw || "").replace(/[^\d+]/g, "");
+  if (d.startsWith("+88")) d = d.slice(3);
+  else if (d.startsWith("88") && d.length === 13) d = d.slice(2);
+  return /^01[3-9]\d{8}$/.test(d) ? d : null;
+}
+
+/**
+ * Validates the order form. Every rule is enforced HERE, on the server — the
+ * app checks the same things for a friendlier experience, but a request can
+ * be sent without the app, so nothing is trusted from the client.
+ */
+function validateOrderForm(b) {
+  const name = String(b.recipientName || "").trim();
+  if (name.length < 2) return { error: "Please enter the recipient's name" };
+  const phone = normalizeBdMobile(b.contactPhone);
+  if (!phone) return { error: "Please enter a valid 11-digit mobile number (01XXXXXXXXX)" };
+  const district = resolveDistrict(b.district);
+  if (!district) return { error: "Please choose your district" };
+  const thana = String(b.thana || "").trim();
+  if (!thana) return { error: "Please enter your thana / upazila" };
+  const line = String(b.address || "").trim();
+  if (line.length < 5) return { error: "Please enter your full address (house, road, village)" };
+  if (!["inside", "outside"].includes(b.deliveryZone)) return { error: "Please choose inside or outside Dhaka" };
+  // "Inside Dhaka" is a delivery-fee zone, but it only makes sense for Dhaka
+  // district — otherwise someone in Sylhet could pick the cheaper fee.
+  if (b.deliveryZone === "inside" && district.name !== "Dhaka") {
+    return { error: "\u201cInside Dhaka\u201d can only be chosen for addresses in Dhaka district" };
+  }
+  return { name, phone, district: district.name, thana, line, zone: b.deliveryZone, address: `${line}, ${thana}, ${district.name}` };
+}
+
 module.exports = function orderRoutes(app, deps) {
   const { auth, adminOnly, upload, uploadToCloudinary, shopOnly } = deps;
 
@@ -66,12 +100,18 @@ module.exports = function orderRoutes(app, deps) {
    */
   app.post("/api/orders/quote", auth, async (req, res) => {
     try {
-      let { items, longitude, latitude } = req.body;
+      let { items, longitude, latitude, deliveryZone } = req.body;
       if (typeof items === "string") items = JSON.parse(items);
       if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ error: "Cart is empty" });
       }
-      if (longitude == null || latitude == null) {
+      const quoteSettings = await getSettings();
+      // An app version from before the order form existed sends GPS coordinates and no
+      // delivery zone. Keep serving it the way it expects instead of breaking it.
+      const quoteFormMode = quoteSettings.orderMode !== "smart" && (deliveryZone !== undefined || longitude == null);
+      if (quoteFormMode) {
+        if (!["inside", "outside"].includes(deliveryZone)) return res.status(400).json({ error: "Please choose inside or outside Dhaka" });
+      } else if (longitude == null || latitude == null) {
         return res.status(400).json({ error: "Delivery location is required" });
       }
 
@@ -86,6 +126,10 @@ module.exports = function orderRoutes(app, deps) {
         routingItems.push({ medicineId: medicine._id, quantity: qty });
       }
 
+      if (quoteFormMode) {
+        const fee = deliveryZone === "inside" ? quoteSettings.courierFeeInsideDhaka : quoteSettings.courierFeeOutsideDhaka;
+        return res.json({ subtotal, deliveryFee: fee, total: subtotal + fee, fulfillmentType: "central" });
+      }
       const routing = await decideFulfillment(Number(latitude), Number(longitude), routingItems);
       res.json({
         subtotal,
@@ -100,13 +144,30 @@ module.exports = function orderRoutes(app, deps) {
     const decremented = []; // { pool: "central"|"shop", id, qty } — for rollback on failure
     try {
       let { items, address, longitude, latitude, contactPhone } = req.body;
+      const { recipientName, district: districtInput, thana, deliveryZone, deliveryNote } = req.body;
       if (typeof items === "string") items = JSON.parse(items); // multipart sends items as a JSON string
 
       if (!Array.isArray(items) || items.length === 0) {
         return res.status(400).json({ error: "Cart is empty" });
       }
-      if (!contactPhone) return res.status(400).json({ error: "Contact phone is required" });
-      if (!longitude || !latitude) return res.status(400).json({ error: "Delivery location is required" });
+
+      // HOW the order is taken is an admin setting (PlatformSettings.orderMode),
+      // read here on the server so it can never be bypassed from the app.
+      const orderSettings = await getSettings();
+      // People don't all update the app at once. A request that carries GPS coordinates but
+      // none of the form's fields comes from an older app version, so it is handled the old
+      // (location-based) way rather than being rejected for missing a form it never had.
+      const sentFormFields = recipientName !== undefined || deliveryZone !== undefined || districtInput !== undefined;
+      const formMode = orderSettings.orderMode !== "smart" && (sentFormFields || !(longitude && latitude));
+      let form = null;
+      if (formMode) {
+        form = validateOrderForm({ recipientName, contactPhone, district: districtInput, thana, address, deliveryZone });
+        if (form.error) return res.status(400).json({ error: form.error });
+        contactPhone = form.phone;
+      } else {
+        if (!contactPhone) return res.status(400).json({ error: "Contact phone is required" });
+        if (!longitude || !latitude) return res.status(400).json({ error: "Delivery location is required" });
+      }
 
       // --- Pass 1: read-only. Get product info to build the order and
       // price it — routing/stock decisions happen separately below, since
@@ -136,7 +197,18 @@ module.exports = function orderRoutes(app, deps) {
       // --- Decide fulfillment ONCE, here, from real-time shop stock and
       // the delivery coordinates. This is the only place that decision is
       // made — the fee it returns is final and never recalculated later.
-      let routing = await decideFulfillment(Number(latitude), Number(longitude), routingItems);
+      // Form orders skip shop matching entirely: they always take the
+      // "central" path, at the courier fee for the zone the customer chose.
+      // The fee is looked up HERE from settings — never trusted from the app.
+      let routing = formMode
+        ? {
+            fulfillmentType: "central",
+            isInsideDhaka: form.zone === "inside",
+            deliveryFee: form.zone === "inside" ? orderSettings.courierFeeInsideDhaka : orderSettings.courierFeeOutsideDhaka,
+            matchedShop: null,
+            routingNote: "Taken through the order form (no GPS location) \u2014 handled by the admin team.",
+          }
+        : await decideFulfillment(Number(latitude), Number(longitude), routingItems);
 
       // --- Pass 2: reserve the actual stock, from whichever pool routing
       // chose. If a local reservation loses a race (another order took the
@@ -219,9 +291,19 @@ module.exports = function orderRoutes(app, deps) {
         patient: req.user.id,
         items: orderItems,
         subtotal, deliveryFee: routing.deliveryFee, total: subtotal + routing.deliveryFee,
-        address: address || null,
-        location: { type: "Point", coordinates: [Number(longitude), Number(latitude)] },
+        address: formMode ? form.address : (address || null),
+        // A form order has no coordinates — leave `location` unset entirely
+        // (a half-formed GeoJSON point would break the geo index).
+        ...(formMode ? {} : { location: { type: "Point", coordinates: [Number(longitude), Number(latitude)] } }),
         contactPhone,
+        ...(formMode
+          ? {
+              orderMode: "form",
+              recipientName: form.name, district: form.district, thana: form.thana,
+              addressLine: form.line, deliveryZone: form.zone,
+              deliveryNote: String(deliveryNote || "").trim().slice(0, 300) || null,
+            }
+          : { orderMode: "smart" }),
         prescriptionUrl,
         fulfillmentType: routing.fulfillmentType,
         isInsideDhaka: routing.isInsideDhaka,
@@ -387,3 +469,6 @@ module.exports = function orderRoutes(app, deps) {
     } catch (err) { res.status(400).json({ error: err.message }); }
   });
 };
+
+// Exposed for unit testing only.
+module.exports._test = { validateOrderForm, normalizeBdMobile };

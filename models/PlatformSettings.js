@@ -32,6 +32,16 @@ const platformSettingsSchema = new mongoose.Schema({
   // Courier fees only apply when NO local shop match exists at all —
   // decided instantly at checkout, never changed after the fact.
   courierFeeInsideDhaka: { type: Number, default: 80, min: 0 },
+  // How medicine orders are taken:
+  //   "form"  — the customer fills in name, phone, district, thana and address and
+  //             picks inside/outside Dhaka. No GPS, no shop matching; every order
+  //             goes to the admin team (the "central" path) at the courier fee for
+  //             that zone. Simple and dependable — the right choice at launch.
+  //   "smart" — the location-based system: GPS address → nearest shop with stock →
+  //             rider, falling back to central. Worth switching on once there are
+  //             enough partner pharmacies and riders for it to pay off.
+  // Existing documents without this field read as "form".
+  orderMode: { type: String, enum: ["form", "smart"], default: "form" },
   courierFeeOutsideDhaka: { type: Number, default: 130, min: 0 },
   // What a rider is paid per completed delivery (platform keeps the
   // difference between this and what the customer paid as margin).

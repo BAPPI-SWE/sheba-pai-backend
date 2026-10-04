@@ -183,7 +183,9 @@ module.exports = function accountRoutes(app, deps) {
       // Only where coordinates exist: writing a partial GeoJSON into a
       // document that has none would corrupt the geo index.
       await Request.updateMany({ patient: id, "location.coordinates.0": { $exists: true } }, { $set: { "location.coordinates": [0, 0] } });
-      await Order.updateMany({ patient: id }, { $set: { address: null, contactPhone: "deleted" } });
+      await Order.updateMany({ patient: id }, {
+        $set: { address: null, contactPhone: "deleted", recipientName: null, district: null, thana: null, addressLine: null, deliveryNote: null },
+      });
       await Order.updateMany({ patient: id, "location.coordinates.0": { $exists: true } }, { $set: { "location.coordinates": [0, 0] } });
 
       // --- anonymize the account itself ---
