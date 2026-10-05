@@ -42,6 +42,16 @@ const platformSettingsSchema = new mongoose.Schema({
   //             enough partner pharmacies and riders for it to pay off.
   // Existing documents without this field read as "form".
   orderMode: { type: String, enum: ["form", "smart"], default: "form" },
+
+  // --- Forced app updates (see versionGate.js) ---
+  // Phones running a version code BELOW this are blocked until they update.
+  // 0 = off. Raised by the admin after a release is live for every user.
+  minVersionCode: { type: Number, default: 0, min: 0 },
+  // The newest version code any real phone has connected with. Maintained by the
+  // server; the admin panel won't accept a minimum above it.
+  highestSeenVersionCode: { type: Number, default: 0, min: 0 },
+  // Optional extra line shown on the "Update now" screen.
+  updateMessage: { type: String, default: null },
   courierFeeOutsideDhaka: { type: Number, default: 130, min: 0 },
   // What a rider is paid per completed delivery (platform keeps the
   // difference between this and what the customer paid as margin).

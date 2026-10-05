@@ -16,6 +16,7 @@ const Service = require("./models/Service");
 const Request = require("./models/Request");
 const PaymentSubmission = require("./models/PaymentSubmission");
 const PlatformSettings = require("./models/PlatformSettings");
+const { invalidateVersionCache } = require("./versionGate");
 
 async function getSettings() {
   let s = await PlatformSettings.findOne({ key: "global" });
@@ -192,7 +193,7 @@ module.exports = function commissionRoutes(app, deps) {
   app.patch("/api/admin/settings", auth, adminOnly, async (req, res) => {
     try {
       const { commissionGraceDays, maxConcurrentJobs, searchRadiusKm, browsePageSize, supportWhatsAppNumber, emergencyContactNumber, privacyPolicyUrl, termsUrl, accountDeletionUrl,
-        orderMode, courierFeeInsideDhaka, courierFeeOutsideDhaka, localDeliveryFee } = req.body;
+        orderMode, courierFeeInsideDhaka, courierFeeOutsideDhaka, localDeliveryFee, minVersionCode, updateMessage } = req.body;
       const settings = await getSettings();
 
       // Links must be real web addresses — a typo here would put a dead link
@@ -232,11 +233,28 @@ module.exports = function commissionRoutes(app, deps) {
       if (courierFeeInsideDhaka !== undefined) settings.courierFeeInsideDhaka = fee(courierFeeInsideDhaka, 80);
       if (courierFeeOutsideDhaka !== undefined) settings.courierFeeOutsideDhaka = fee(courierFeeOutsideDhaka, 130);
       if (localDeliveryFee !== undefined) settings.localDeliveryFee = fee(localDeliveryFee, 80);
+      if (minVersionCode !== undefined) {
+        const n = Math.floor(Number(minVersionCode));
+        if (!Number.isFinite(n) || n < 0) throw new Error("The required version must be a whole number (0 switches forced updates off)");
+        // Safety net: requiring a version that no phone has run yet would lock EVERY user out,
+        // because they would be sent to the Play Store for an update that isn't there. Lowering
+        // the number, or leaving it unchanged, is always allowed.
+        if (n > (settings.minVersionCode || 0) && n > (settings.highestSeenVersionCode || 0)) {
+          throw new Error(
+            `No phone has connected with version ${n} yet (the highest seen so far is ${settings.highestSeenVersionCode || 0}). ` +
+            `Install the new release from the Play Store on a phone, open the app once, then try again. ` +
+            `Requiring a version nobody can get yet would lock every user out.`
+          );
+        }
+        settings.minVersionCode = n;
+      }
+      if (updateMessage !== undefined) settings.updateMessage = String(updateMessage || "").trim().slice(0, 300) || null;
       if (privacyPolicyUrl !== undefined) settings.privacyPolicyUrl = cleanUrl(privacyPolicyUrl);
       if (termsUrl !== undefined) settings.termsUrl = cleanUrl(termsUrl);
       if (accountDeletionUrl !== undefined) settings.accountDeletionUrl = cleanUrl(accountDeletionUrl);
 
       await settings.save();
+      invalidateVersionCache(); // a new minimum applies to the very next request
       res.json(settings);
     } catch (err) {
       res.status(400).json({ error: err.message });

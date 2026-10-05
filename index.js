@@ -33,6 +33,7 @@ const bannerRoutes = require("./bannerRoutes");
 const doctorRoutes = require("./doctorRoutes");
 const doctorAdminRoutes = require("./doctorAdminRoutes");
 const accountRoutes = require("./accountRoutes");
+const { versionGate, versionRoutes } = require("./versionGate");
 const riderRoutes = require("./riderRoutes");
 const shopRiderRoutes = require("./shopRiderRoutes");
 const { sendPush } = require("./pushService");
@@ -49,6 +50,10 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(express.json());
 app.set("io", io);
+// Forced updates: refuses API calls from app versions below the admin-set minimum
+// (HTTP 426). Calls with no version header — admin panel, older app versions — pass.
+app.use("/api", versionGate);
+versionRoutes(app);
 
 const upload = multer({ storage: multer.memoryStorage() });
 
