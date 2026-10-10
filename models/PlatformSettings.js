@@ -43,6 +43,21 @@ const platformSettingsSchema = new mongoose.Schema({
   // Existing documents without this field read as "form".
   orderMode: { type: String, enum: ["form", "smart"], default: "form" },
 
+  // How caregiver bookings work:
+  //   "directory" — families browse a list of verified caregivers (filter by
+  //                 district, care type, gender...) and book by calling,
+  //                 WhatsApp, or sending a request from the app. Every request
+  //                 comes to the admin team, who confirm and assign a caregiver.
+  //                 The right choice at launch.
+  //   "dispatch"  — the original live system: caregivers go online, patients
+  //                 request nearby caregivers and the first to accept gets the job.
+  // Existing documents without this field read as "directory".
+  caregiverMode: { type: String, enum: ["directory", "dispatch"], default: "directory" },
+  // Phone / WhatsApp numbers the caregiver section uses. Empty = fall back to
+  // the emergency contact number / support WhatsApp number.
+  careContactNumber: { type: String, default: null },
+  careWhatsAppNumber: { type: String, default: null },
+
   // --- Forced app updates (see versionGate.js) ---
   // Phones running a version code BELOW this are blocked until they update.
   // 0 = off. Raised by the admin after a release is live for every user.

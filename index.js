@@ -32,6 +32,8 @@ const otpRoutes = require("./otpRoutes");
 const bannerRoutes = require("./bannerRoutes");
 const doctorRoutes = require("./doctorRoutes");
 const doctorAdminRoutes = require("./doctorAdminRoutes");
+const careRoutes = require("./careRoutes");
+const careAdminRoutes = require("./careAdminRoutes");
 const accountRoutes = require("./accountRoutes");
 const { versionGate, versionRoutes } = require("./versionGate");
 const riderRoutes = require("./riderRoutes");
@@ -928,6 +930,9 @@ bannerRoutes(app, { auth, adminOnly, upload, uploadToCloudinary });
 // --- DOCTOR DIRECTORY: specialties, doctors by district, Excel import ---
 doctorRoutes(app, { auth });
 doctorAdminRoutes(app, { auth, adminOnly, upload, uploadToCloudinary });
+// Caregiver directory (booking requests handled by the admin team)
+careRoutes(app, { auth, helperOnly, upload, uploadToCloudinary });
+careAdminRoutes(app, { auth, adminOnly });
 accountRoutes(app, { auth, cloudinary });
 
 server.listen(PORT, "0.0.0.0", () => {

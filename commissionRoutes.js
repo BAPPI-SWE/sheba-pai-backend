@@ -193,7 +193,8 @@ module.exports = function commissionRoutes(app, deps) {
   app.patch("/api/admin/settings", auth, adminOnly, async (req, res) => {
     try {
       const { commissionGraceDays, maxConcurrentJobs, searchRadiusKm, browsePageSize, supportWhatsAppNumber, emergencyContactNumber, privacyPolicyUrl, termsUrl, accountDeletionUrl,
-        orderMode, courierFeeInsideDhaka, courierFeeOutsideDhaka, localDeliveryFee, minVersionCode, updateMessage } = req.body;
+        orderMode, courierFeeInsideDhaka, courierFeeOutsideDhaka, localDeliveryFee, minVersionCode, updateMessage,
+        caregiverMode, careContactNumber, careWhatsAppNumber } = req.body;
       const settings = await getSettings();
 
       // Links must be real web addresses — a typo here would put a dead link
@@ -228,6 +229,12 @@ module.exports = function commissionRoutes(app, deps) {
         if (!["form", "smart"].includes(orderMode)) throw new Error('Order mode must be "form" or "smart"');
         settings.orderMode = orderMode;
       }
+      if (caregiverMode !== undefined) {
+        if (!["directory", "dispatch"].includes(caregiverMode)) throw new Error('Caregiver mode must be "directory" or "dispatch"');
+        settings.caregiverMode = caregiverMode;
+      }
+      if (careContactNumber !== undefined) settings.careContactNumber = String(careContactNumber || "").trim() || null;
+      if (careWhatsAppNumber !== undefined) settings.careWhatsAppNumber = String(careWhatsAppNumber || "").trim() || null;
       // Delivery fees in taka, clamped so a stray extra zero can't charge customers ৳8000.
       const fee = (v, fallback) => Math.min(2000, Math.max(0, Number(v) >= 0 ? Number(v) : fallback));
       if (courierFeeInsideDhaka !== undefined) settings.courierFeeInsideDhaka = fee(courierFeeInsideDhaka, 80);
@@ -274,6 +281,10 @@ module.exports = function commissionRoutes(app, deps) {
         supportWhatsAppNumber: settings.supportWhatsAppNumber || null,
         emergencyContactNumber: settings.emergencyContactNumber || null,
         orderMode: settings.orderMode || "form",
+        caregiverMode: settings.caregiverMode || "directory",
+        // The caregiver section's own numbers, falling back to the general ones.
+        careContactNumber: settings.careContactNumber || settings.emergencyContactNumber || null,
+        careWhatsAppNumber: settings.careWhatsAppNumber || settings.supportWhatsAppNumber || null,
         courierFeeInsideDhaka: settings.courierFeeInsideDhaka,
         courierFeeOutsideDhaka: settings.courierFeeOutsideDhaka,
         privacyPolicyUrl: settings.privacyPolicyUrl || null,

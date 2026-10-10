@@ -40,6 +40,7 @@ const RequirementSubmission = require("./models/RequirementSubmission");
 const OtpVerification = require("./models/OtpVerification");
 const Request = require("./models/Request");
 const Order = require("./models/Order");
+const CareBooking = require("./models/CareBooking");
 
 const ACTIVE_REQUEST = ["searching", "accepted", "on_the_way", "helping"];
 const OPEN_ORDER = { $nin: ["delivered", "cancelled"] };
@@ -52,6 +53,10 @@ async function findBlocker(user) {
     if (await Request.exists({ patient: id, status: { $in: ACTIVE_REQUEST } })) {
       return { code: "ACTIVE_REQUEST", error: "You have a caregiver request in progress. Please complete or cancel it first." };
     }
+    // A confirmed / ongoing caregiver booking (directory mode) counts as a request in progress.
+    if (await CareBooking.exists({ patient: id, status: { $in: ["confirmed", "ongoing"] } })) {
+      return { code: "ACTIVE_REQUEST", error: "You have a caregiver booking in progress. Please call us to finish or cancel it first." };
+    }
     if (await Order.exists({ patient: id, status: OPEN_ORDER })) {
       return { code: "ACTIVE_ORDER", error: "You have a medicine order in progress. Please wait until it is delivered or cancel it first." };
     }
@@ -59,6 +64,9 @@ async function findBlocker(user) {
   if (user.role === "helper") {
     if (await Request.exists({ helper: id, status: { $in: ACTIVE_REQUEST } })) {
       return { code: "ACTIVE_JOB", error: "You have a job in progress. Please finish it first." };
+    }
+    if (await CareBooking.exists({ assignedCaregiver: id, status: { $in: ["confirmed", "ongoing"] } })) {
+      return { code: "ACTIVE_JOB", error: "You have a caregiver job in progress. Please finish it first." };
     }
     const hp = await HelperProfile.findOne({ user: id }).select("commissionBalance").lean();
     if (hp && hp.commissionBalance > 0) {
@@ -140,13 +148,15 @@ module.exports = function accountRoutes(app, deps) {
       if (user.role === "helper") {
         const hp = await HelperProfile.findOne({ user: id }).lean();
         if (hp) {
-          imageUrls.push(hp.nidFrontUrl, hp.nidBackUrl, hp.policeClearanceUrl, ...(hp.selfieUrls || []), ...(hp.certificateUrls || []));
+          imageUrls.push(hp.nidFrontUrl, hp.nidBackUrl, hp.policeClearanceUrl, ...(hp.selfieUrls || []), ...(hp.certificateUrls || []), hp.care?.photoUrl);
           await HelperProfile.updateOne({ _id: hp._id }, {
             $set: {
               nidFrontUrl: null, nidBackUrl: null, policeClearanceUrl: null, selfieUrls: [], certificateUrls: [],
               nidNumber: null, fullName: null, altPhone: null, rejectionReason: null,
               isAvailable: false, verificationStatus: "unsubmitted",
               location: { type: "Point", coordinates: [0, 0] },
+              // Off the caregiver directory: no public photo, bio or areas left behind.
+              "care.photoUrl": null, "care.bio": null, "care.districts": [], "care.available": false,
             },
           });
         }
@@ -187,6 +197,16 @@ module.exports = function accountRoutes(app, deps) {
         $set: { address: null, contactPhone: "deleted", recipientName: null, district: null, thana: null, addressLine: null, deliveryNote: null },
       });
       await Order.updateMany({ patient: id, "location.coordinates.0": { $exists: true } }, { $set: { "location.coordinates": [0, 0] } });
+
+      // Caregiver booking requests: close the ones still waiting, and remove the
+      // family's personal details from all of them (the booking itself is kept for records).
+      await CareBooking.updateMany({ patient: id, status: { $in: ["new", "contacted"] } }, {
+        $set: { status: "cancelled", cancelledBy: "patient", cancelReason: "Account deleted" },
+        $push: { history: { status: "cancelled", by: "system", note: "Account deleted", at: new Date() } },
+      });
+      await CareBooking.updateMany({ patient: id }, {
+        $set: { contactName: "Deleted user", contactPhone: "deleted", address: null, patientName: null, conditionNote: null, note: null },
+      });
 
       // --- anonymize the account itself ---
       await User.updateOne({ _id: id }, {
