@@ -14,11 +14,12 @@
 const HelperProfile = require("./models/HelperProfile");
 const CareCategory = require("./models/CareCategory");
 const CareBooking = require("./models/CareBooking");
+const CareOffer = require("./models/CareOffer");
 const User = require("./models/User");
 const { sendPush } = require("./pushService");
 const { slugify } = require("./bdGeo");
 const {
-  STANDARD_CATEGORIES, TIERS, escapeRegex, isId, clean,
+  STANDARD_CATEGORIES, STANDARD_OFFERS, TIERS, escapeRegex, isId, clean,
   listedFilter, missingCareFields, isListed, applyCareFields, validateBooking, newBookingCode, recomputeCaregiverRating,
 } = require("./careCommon");
 
@@ -82,7 +83,7 @@ module.exports = function careAdminRoutes(app, deps) {
       if (q) {
         const rx = new RegExp(escapeRegex(q), "i");
         const digits = q.replace(/\D/g, "");
-        filter.$or = [{ code: rx }, { contactName: rx }, { patientName: rx }, { area: rx }];
+        filter.$or = [{ code: rx }, { contactName: rx }, { patientName: rx }, { area: rx }, { offerName: rx }, { offerNameBangla: rx }];
         if (digits.length >= 3) filter.$or.push({ contactPhone: new RegExp(escapeRegex(digits.replace(/^880?/, "0").replace(/^00/, "0"))) });
       }
       const [rows, total] = await Promise.all([
@@ -193,7 +194,7 @@ module.exports = function careAdminRoutes(app, deps) {
       if (nowCaregiver && nowCaregiver !== prevCaregiver && ["contacted", "confirmed", "ongoing"].includes(b.status)) {
         sendPush([nowCaregiver], {
           title: "নতুন কাজ নির্ধারিত হয়েছে",
-          body: `${b.categoryNameBangla || "কেয়ারগিভার সেবা"} — ${b.area ? b.area + ", " : ""}${b.district}`,
+          body: [b.offerNameBangla || b.categoryNameBangla || "কেয়ারগিভার সেবা", [b.area, b.district].filter(Boolean).join(", ")].filter(Boolean).join(" — "),
           data: { type: "care_assignment", bookingId: String(b._id) },
         });
       }
@@ -254,6 +255,88 @@ module.exports = function careAdminRoutes(app, deps) {
       await profile.save();
       const p = await HelperProfile.findById(profile._id).populate("user", "name phone").populate("care.categories", "name nameBangla").lean();
       res.json(adminCaregiverRow(p));
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+
+  /* ============================ SERVICES & PACKAGES ============================ */
+
+  function offerFields(body, isNew) {
+    const out = {};
+    if (isNew || body.kind !== undefined) {
+      if (!["urgent", "package"].includes(body.kind)) throw new Error("Choose urgent service or monthly package");
+      out.kind = body.kind;
+    }
+    if (isNew || body.name !== undefined) { out.name = clean(body.name, 120); if (!out.name) throw new Error("English name is required"); }
+    if (isNew || body.nameBangla !== undefined) { out.nameBangla = clean(body.nameBangla, 160); if (!out.nameBangla) throw new Error("Bangla name is required"); }
+    for (const k of ["description", "descriptionBangla", "priceNote", "priceNoteBangla", "badge", "badgeBangla"]) {
+      if (body[k] !== undefined) out[k] = clean(body[k], 300);
+    }
+    if (body.iconKey !== undefined) out.iconKey = clean(body.iconKey, 40) || "general";
+    if (body.price !== undefined) {
+      if (body.price === null || body.price === "") out.price = null;
+      else {
+        const n = Math.round(Number(body.price));
+        if (!Number.isFinite(n) || n < 0 || n > 10000000) throw new Error("Price must be a number in taka");
+        out.price = n;
+      }
+    }
+    if (body.priceUnit !== undefined) {
+      if (!["visit", "day", "shift12", "month"].includes(body.priceUnit)) throw new Error("Unknown price unit");
+      out.priceUnit = body.priceUnit;
+    }
+    for (const k of ["features", "featuresBangla"]) {
+      if (body[k] !== undefined) {
+        const list = Array.isArray(body[k]) ? body[k] : String(body[k] || "").split("\n");
+        out[k] = list.map((x) => String(x).trim()).filter(Boolean).slice(0, 12);
+      }
+    }
+    if (body.sortOrder !== undefined) out.sortOrder = Number(body.sortOrder) || 0;
+    if (body.isActive !== undefined) out.isActive = !!body.isActive;
+    return out;
+  }
+
+  app.get("/api/admin/care/offers", ...guard, async (req, res) => {
+    try {
+      const [rows, counts] = await Promise.all([
+        CareOffer.find().sort({ kind: 1, sortOrder: 1, createdAt: 1 }).lean(),
+        CareBooking.aggregate([{ $match: { offer: { $ne: null } } }, { $group: { _id: "$offer", n: { $sum: 1 } } }]),
+      ]);
+      const map = Object.fromEntries(counts.map((c) => [String(c._id), c.n]));
+      res.json(rows.map((o) => ({ ...o, requestCount: map[String(o._id)] || 0 })));
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+
+  app.post("/api/admin/care/offers", ...guard, async (req, res) => {
+    try { res.status(201).json(await new CareOffer(offerFields(req.body || {}, true)).save()); }
+    catch (err) { res.status(400).json({ error: err.message }); }
+  });
+
+  app.patch("/api/admin/care/offers/:id", ...guard, async (req, res) => {
+    try {
+      const o = await CareOffer.findById(req.params.id);
+      if (!o) return res.status(404).json({ error: "Not found" });
+      Object.assign(o, offerFields(req.body || {}, false));
+      await o.save();
+      res.json(o);
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+
+  // Deleting is safe: bookings keep a copy of the name and price they were made with.
+  app.delete("/api/admin/care/offers/:id", ...guard, async (req, res) => {
+    try { await CareOffer.deleteOne({ _id: req.params.id }); res.json({ ok: true }); }
+    catch (err) { res.status(400).json({ error: err.message }); }
+  });
+
+  /** Adds the standard services & packages that don't exist yet (matched by English name). Never overwrites edits. */
+  app.post("/api/admin/care/offers/seed", ...guard, async (req, res) => {
+    try {
+      let added = 0;
+      for (const [i, o] of STANDARD_OFFERS.entries()) {
+        if (await CareOffer.exists({ kind: o.kind, name: o.name })) continue;
+        await new CareOffer({ ...o, sortOrder: (i + 1) * 10 }).save();
+        added++;
+      }
+      res.json({ added, total: await CareOffer.countDocuments() });
     } catch (err) { res.status(400).json({ error: err.message }); }
   });
 

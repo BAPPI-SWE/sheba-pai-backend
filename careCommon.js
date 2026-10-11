@@ -326,8 +326,9 @@ async function validateBooking(b) {
   if (!contactName || contactName.length < 2) return { error: "Please enter the contact person's name" };
   const contactPhone = normalizeBdMobile(b.contactPhone);
   if (!contactPhone) return { error: "Please enter a valid 11-digit mobile number (01XXXXXXXXX)" };
-  const district = resolveDistrict(b.district);
-  if (!district) return { error: "Please choose the district where care is needed" };
+  // District is optional (quick requests only ask for name + phone), but must be real if given.
+  const district = b.district ? resolveDistrict(b.district) : null;
+  if (b.district && !district) return { error: "Please choose the district where care is needed" };
 
   const shift = b.shift || "day12";
   if (!SHIFTS.includes(shift)) return { error: "Please choose a shift" };
@@ -375,7 +376,7 @@ async function validateBooking(b) {
   return {
     fields: {
       contactName, contactPhone,
-      district: district.name, division: district.division,
+      district: district?.name || null, division: district?.division || null,
       area: clean(b.area, 120), address: clean(b.address, 300),
       shift, planType, startDate, durationDays,
       patientName: clean(b.patientName, 80), patientAge,
@@ -390,6 +391,63 @@ async function validateBooking(b) {
       requestedCaregiverCode: requested?.care?.code || null,
       requestedCaregiverName: requested?.user?.name || null,
     },
+  };
+}
+
+/* ------------------------- one-tap services & packages ------------------------- */
+
+// Seeded by Admin → Caregivers → Services & packages → "Add standard services & packages".
+// The PRICES ARE STARTING SUGGESTIONS ONLY — check and change every one before going live.
+const STANDARD_OFFERS = [
+  // --- urgent / instant home visits ---
+  { kind: "urgent", iconKey: "injection", price: 300, priceUnit: "visit", name: "Injection at home", nameBangla: "বাসায় ইনজেকশন দেওয়া",
+    description: "A nurse comes to give an injection (IM / IV / insulin).", descriptionBangla: "নার্স বাসায় এসে ইনজেকশন দেবেন (মাংসপেশি / শিরায় / ইনসুলিন)।",
+    priceNote: "Medicine not included", priceNoteBangla: "ওষুধের দাম আলাদা" },
+  { kind: "urgent", iconKey: "dressing", price: 500, priceUnit: "visit", name: "Wound dressing", nameBangla: "ক্ষত ড্রেসিং / ড্রেসিং পরিবর্তন",
+    description: "Cleaning and dressing of wounds, bedsores or surgical stitches.", descriptionBangla: "ক্ষত, বেডসোর বা অপারেশনের সেলাই পরিষ্কার ও ড্রেসিং।",
+    priceNote: "Dressing materials not included", priceNoteBangla: "ড্রেসিং সামগ্রী আলাদা" },
+  { kind: "urgent", iconKey: "saline", price: 800, priceUnit: "visit", name: "Saline / IV cannula", nameBangla: "স্যালাইন / ক্যানুলা লাগানো",
+    description: "Cannula insertion and saline drip, watched by the nurse.", descriptionBangla: "ক্যানুলা লাগানো ও স্যালাইন দেওয়া, নার্স পাশে থেকে দেখবেন।",
+    priceNote: "Saline & cannula not included", priceNoteBangla: "স্যালাইন ও ক্যানুলার দাম আলাদা" },
+  { kind: "urgent", iconKey: "catheter", price: 1000, priceUnit: "visit", name: "Catheter insert / change", nameBangla: "ক্যাথেটার লাগানো / পরিবর্তন",
+    description: "Urinary catheter fitted or changed by a trained nurse.", descriptionBangla: "প্রশিক্ষিত নার্সের মাধ্যমে ক্যাথেটার লাগানো বা পরিবর্তন।",
+    priceNote: "Catheter not included", priceNoteBangla: "ক্যাথেটারের দাম আলাদা" },
+  { kind: "urgent", iconKey: "ngtube", price: 1000, priceUnit: "visit", name: "NG tube insert / change", nameBangla: "এনজি টিউব লাগানো / পরিবর্তন",
+    description: "Feeding tube fitted or changed by a trained nurse.", descriptionBangla: "খাবারের নল (এনজি টিউব) লাগানো বা পরিবর্তন।",
+    priceNote: "Tube not included", priceNoteBangla: "টিউবের দাম আলাদা" },
+  { kind: "urgent", iconKey: "checkup", price: 200, priceUnit: "visit", name: "BP & sugar check", nameBangla: "প্রেশার ও সুগার মাপা",
+    description: "Blood pressure and blood sugar checked at home.", descriptionBangla: "বাসায় এসে রক্তচাপ ও ডায়াবেটিস মেপে দেওয়া।" },
+
+  // --- monthly packages ---
+  { kind: "package", iconKey: "elderly", price: 18000, priceUnit: "month", name: "Elderly day care · 8 hours", nameBangla: "বয়স্কদের দিনের যত্ন · ৮ ঘণ্টা",
+    description: "A caring companion for an older parent during the day.", descriptionBangla: "দিনের বেলা বয়স্ক মা-বাবার পাশে একজন যত্নশীল সঙ্গী।",
+    features: ["8 hours a day, 26 days a month", "Bathing, feeding & hygiene", "Medicine reminders", "Walks and company"],
+    featuresBangla: ["দিনে ৮ ঘণ্টা, মাসে ২৬ দিন", "গোসল, খাওয়ানো ও পরিচ্ছন্নতা", "সময়মতো ওষুধ খাওয়ানো", "হাঁটা ও সঙ্গ দেওয়া"] },
+  { kind: "package", iconKey: "bedridden", price: 22000, priceUnit: "month", name: "Patient care · 12 hours", nameBangla: "রোগীর দেখাশোনা · ১২ ঘণ্টা",
+    description: "Day or night shift for bedridden or recovering patients.", descriptionBangla: "শয্যাশায়ী বা অসুস্থ রোগীর জন্য দিনের বা রাতের শিফট।",
+    badge: "Popular", badgeBangla: "জনপ্রিয়",
+    features: ["12 hours a day (day or night)", "Turning, diaper change, bed bath", "Feeding & medicines", "Free replacement if needed"],
+    featuresBangla: ["দিনে ১২ ঘণ্টা (দিন বা রাত)", "পাশ ফেরানো, ডায়াপার বদল, বিছানায় গোসল", "খাওয়ানো ও ওষুধ", "প্রয়োজনে কেয়ারগিভার বদল"] },
+  { kind: "package", iconKey: "livein", price: 30000, priceUnit: "month", name: "Live-in caregiver · 24 hours", nameBangla: "২৪ ঘণ্টা থাকা-খাওয়া কেয়ারগিভার",
+    description: "Stays at your home round the clock.", descriptionBangla: "রোগীর বাসায় থেকে সার্বক্ষণিক দেখাশোনা।",
+    features: ["Stays at home, day and night", "All daily care and hygiene", "Regular check-ins by our team", "Free replacement if needed"],
+    featuresBangla: ["দিনরাত বাসায় থেকে সেবা", "দৈনন্দিন সব যত্ন ও পরিচ্ছন্নতা", "আমাদের টিমের নিয়মিত খোঁজখবর", "প্রয়োজনে কেয়ারগিভার বদল"] },
+  { kind: "package", iconKey: "stroke", price: 35000, priceUnit: "month", name: "Stroke & paralysis care", nameBangla: "স্ট্রোক ও প্যারালাইসিস রোগীর বিশেষ যত্ন",
+    description: "A trained caregiver for stroke and paralysis recovery.", descriptionBangla: "স্ট্রোক ও প্যারালাইসিস রোগীর জন্য প্রশিক্ষিত কেয়ারগিভার।",
+    features: ["Trained caregiver, 24 hours", "Help with exercises and moving", "Bedsore prevention", "Feeding, NG tube care"],
+    featuresBangla: ["প্রশিক্ষিত কেয়ারগিভার, ২৪ ঘণ্টা", "ব্যায়াম ও চলাফেরায় সাহায্য", "বেডসোর প্রতিরোধ", "খাওয়ানো ও এনজি টিউবের যত্ন"] },
+  { kind: "package", iconKey: "nursing", price: 45000, priceUnit: "month", name: "Home nurse · 12 hours", nameBangla: "হোম নার্স · ১২ ঘণ্টা",
+    description: "A registered nurse for patients who need clinical care.", descriptionBangla: "ক্লিনিক্যাল যত্ন দরকার এমন রোগীর জন্য নিবন্ধিত নার্স।",
+    features: ["Registered nurse (diploma / BSc)", "Injections, saline, dressing", "Vital signs every day", "Report to your doctor"],
+    featuresBangla: ["নিবন্ধিত নার্স (ডিপ্লোমা / বিএসসি)", "ইনজেকশন, স্যালাইন, ড্রেসিং", "প্রতিদিন প্রেশার, সুগার, অক্সিজেন মাপা", "ডাক্তারকে রিপোর্ট দেওয়া"] },
+];
+
+function publicOffer(o) {
+  return {
+    _id: o._id, kind: o.kind, name: o.name, nameBangla: o.nameBangla,
+    description: o.description, descriptionBangla: o.descriptionBangla, iconKey: o.iconKey || "general",
+    price: o.price, priceUnit: o.priceUnit, priceNote: o.priceNote, priceNoteBangla: o.priceNoteBangla,
+    features: o.features || [], featuresBangla: o.featuresBangla || [], badge: o.badge, badgeBangla: o.badgeBangla,
   };
 }
 
@@ -435,7 +493,7 @@ async function recentReviews(userId, limit = 10) {
 }
 
 module.exports = {
-  TIERS, SHIFTS, RATE_KEYS, tierRank, STANDARD_CATEGORIES,
+  TIERS, SHIFTS, RATE_KEYS, tierRank, STANDARD_CATEGORIES, STANDARD_OFFERS, publicOffer,
   escapeRegex, isId, normalizeBdMobile, clean,
   listedFilter, missingCareFields, isListed, fromPriceOf, publicCaregiver, publicCategory, caregiverQuery, LIST_SORT,
   newBookingCode, newCaregiverCode, applyCareFields, validateBooking,

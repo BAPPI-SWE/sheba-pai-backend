@@ -34,6 +34,15 @@ const careBookingSchema = new mongoose.Schema(
     patient: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
     source: { type: String, enum: ["app", "phone", "whatsapp", "admin"], default: "app" },
 
+    // What the family tapped: an urgent home-visit service, a monthly package,
+    // a specific caregiver, or a general request.
+    kind: { type: String, enum: ["urgent", "package", "caregiver", "general"], default: "general" },
+    offer: { type: mongoose.Schema.Types.ObjectId, ref: "CareOffer", default: null },
+    offerName: { type: String, default: null }, // snapshots — the offer may be edited later
+    offerNameBangla: { type: String, default: null },
+    offerPrice: { type: Number, default: null },
+    offerPriceUnit: { type: String, default: null },
+
     category: { type: mongoose.Schema.Types.ObjectId, ref: "CareCategory", default: null },
     categoryName: { type: String, default: null }, // snapshot, English
     categoryNameBangla: { type: String, default: null },
@@ -55,7 +64,7 @@ const careBookingSchema = new mongoose.Schema(
     preferredGender: { type: String, enum: ["any", "female", "male"], default: "any" },
 
     division: { type: String, default: null },
-    district: { type: String, required: true },
+    district: { type: String, default: null }, // optional: quick requests only need name + phone
     area: { type: String, default: null },
     address: { type: String, default: null },
 
