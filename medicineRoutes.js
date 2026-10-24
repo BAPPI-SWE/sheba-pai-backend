@@ -175,6 +175,27 @@ module.exports = function medicineRoutes(app, deps) {
   });
 
   /**
+   * GET /api/medicines/sitemap — every public medicine and generic address,
+   * for the website's sitemap.xml (so Google can find each product page).
+   * Slugs and dates only; registered before /:slug so "sitemap" isn't read as a slug.
+   */
+  app.get("/api/medicines/sitemap", async (req, res) => {
+    try {
+      const [medicines, generics] = await Promise.all([
+        Medicine.find({ isActive: true, isDiscontinued: false }).select("slug updatedAt").lean(),
+        Generic.find({ isActive: true }).select("slug updatedAt").lean(),
+      ]);
+      res.set("Cache-Control", "public, max-age=3600");
+      res.json({
+        medicines: medicines.map((m) => ({ slug: m.slug, updatedAt: m.updatedAt })),
+        generics: generics.map((g) => ({ slug: g.slug, updatedAt: g.updatedAt })),
+      });
+    } catch (err) {
+      res.status(400).json({ error: err.message });
+    }
+  });
+
+  /**
    * GET /api/medicines/:slug — full product page.
    * Returns the brand, its complete clinical content (via the generic),
    * and cheaper alternative brands of the same generic.
