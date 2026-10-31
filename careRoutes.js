@@ -109,6 +109,36 @@ module.exports = function careRoutes(app, deps) {
     } catch (err) { res.status(400).json({ error: err.message }); }
   });
 
+  /**
+   * For the website's sitemap and pre-built pages: which districts have listed
+   * caregivers, and which care types are offered in each. No personal data.
+   *   → { categories: [slug], districts: [{ district: "Dhaka", categories: [slug] }] }
+   */
+  app.get("/api/care/sitemap", async (req, res) => {
+    try {
+      const [cats, rows] = await Promise.all([
+        CareCategory.find({ isActive: true }).select("slug").lean(),
+        HelperProfile.find(listedFilter()).select("care.districts care.categories").lean(),
+      ]);
+      const slugOf = Object.fromEntries(cats.map((c) => [String(c._id), c.slug]));
+      const byDistrict = {};
+      const withCaregivers = new Set();
+      for (const p of rows) {
+        const slugs = (p.care?.categories || []).map((id) => slugOf[String(id)]).filter(Boolean);
+        slugs.forEach((s) => withCaregivers.add(s));
+        for (const d of p.care?.districts || []) {
+          byDistrict[d] = byDistrict[d] || new Set();
+          slugs.forEach((s) => byDistrict[d].add(s));
+        }
+      }
+      res.set("Cache-Control", "public, max-age=3600");
+      res.json({
+        categories: [...withCaregivers],
+        districts: Object.entries(byDistrict).map(([district, set]) => ({ district, categories: [...set] })),
+      });
+    } catch (err) { res.status(400).json({ error: err.message }); }
+  });
+
   /** One caregiver's public profile, with recent reviews. */
   app.get("/api/care/caregivers/:code", async (req, res) => {
     try {
